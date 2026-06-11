@@ -1,0 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Space Grotesk", sans-serif;
+  
+  --color-brand-bg: #060B0D;
+  --color-brand-surface: #0D171A;
+  --color-brand-card: #122126;
+  --color-brand-primary: #2AA198;
+  --color-brand-secondary: #1F7A72;
+  --color-brand-accent: #8EE6DD;
+  --color-brand-text: #F5F7F7;
+  --color-brand-muted: #7E9393;
+  --color-brand-border: rgba(255, 255, 255, 0.06);
+}
+
+@layer utilities {
+  .glow-border {
+    border: 1px solid rgba(42, 161, 152, 0.15);
+    box-shadow: 0 0 15px rgba(42, 161, 152, 0.05);
+  }
+  
+  .glow-hover:hover {
+    box-shadow: 0 0 25px rgba(142, 230, 221, 0.12);
+    border-color: rgba(142, 230, 221, 0.3);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 10px rgba(142, 230, 221, 0.3);
+  }
+
+  .bg-radial-gradient {
+    background: radial-gradient(circle at center, rgba(42, 161, 152, 0.15) 0%, transparent 70%);
+  }
+
+  .bg-grid-pattern {
+    background-size: 40px 40px;
+    background-image: 
+      linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  }
+}
+
+html {
+  background-color: #060B0D;
+}
+
+body {
+  background-color: #060B0D;
+  color: #F5F7F7;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #060B0D;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #122126;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2AA198;
+}
+
+@layer components {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
