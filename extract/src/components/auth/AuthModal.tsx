@@ -1,45 +1,26 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Shield, Lock, AlertCircle, Signal } from 'lucide-react';
+import { X, Shield, Signal } from 'lucide-react';
+import { SignIn, SignUp } from '@clerk/nextjs';
 
 export default function AuthModal() {
-  const { isAuthModalOpen, setAuthModalOpen, login, signup, onboardingData } = useApp();
-  const [isSignUp, setIsSignUp] = useState(false);
-  
-  // Fields state
-  const [email, setEmail] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [error, setError] = useState('');
+  const { isAuthModalOpen, setAuthModalOpen, onboardingData, authModalView, setAuthModalView } = useApp();
 
   if (!isAuthModalOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  const isSignUp = authModalView === 'signUp';
 
-    if (!email) {
-      setError('Please enter your email address');
-      return;
-    }
-    if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-      setError('Please provide a valid email structure');
-      return;
-    }
-    if (isSignUp && (!firstName || !lastName)) {
-      setError('First and last names are required for Sign Up');
-      return;
-    }
-    if (!isSignUp && !firstName) {
-      setError('First name is required to personalize your workspace');
-      return;
-    }
-
-    if (isSignUp) {
-      signup(firstName, lastName, email);
-    } else {
-      login(firstName, email);
-    }
+  const clerkAppearance = {
+    elements: {
+      rootBox: 'w-full',
+      card: 'shadow-none border-0 bg-transparent w-full',
+      headerTitle: 'text-brand-text font-display',
+      headerSubtitle: 'text-brand-muted',
+      socialButtonsBlockButton: 'border-brand-border bg-brand-card text-brand-text hover:bg-brand-surface',
+      formButtonPrimary: 'bg-brand-primary text-brand-bg hover:bg-brand-accent',
+      formFieldInput: 'bg-brand-bg border-brand-border text-brand-text placeholder:text-brand-muted',
+      footerActionLink: 'text-brand-accent hover:text-brand-accent',
+    },
   };
 
   return (
@@ -78,75 +59,13 @@ export default function AuthModal() {
           </div>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="flex items-start gap-2.5 p-3 rounded-lg bg-red-950/30 border border-red-900/40 text-red-200 text-xs text-left">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          )}
-
+        <div className="flex justify-center">
           {isSignUp ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-mono text-brand-muted uppercase tracking-wider mb-1.5">First name</label>
-                <input
-                  type="text"
-                  placeholder="Jane"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  className="w-full bg-brand-bg px-3 py-2 text-sm text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-sans"
-                  id="signup-firstname-input"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-mono text-brand-muted uppercase tracking-wider mb-1.5">Last name</label>
-                <input
-                  type="text"
-                  placeholder="Doe"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  className="w-full bg-brand-bg px-3 py-2 text-sm text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-sans"
-                  id="signup-lastname-input"
-                />
-              </div>
-            </div>
+            <SignUp routing="hash" appearance={clerkAppearance} />
           ) : (
-            <div>
-              <label className="block text-[11px] font-mono text-brand-muted uppercase tracking-wider mb-1.5">First name</label>
-              <input
-                type="text"
-                placeholder="Jane"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className="w-full bg-brand-bg px-3 py-2 text-sm text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-sans"
-                id="signin-firstname-input"
-              />
-            </div>
+            <SignIn routing="hash" appearance={clerkAppearance} />
           )}
-
-          <div>
-            <label className="block text-[11px] font-mono text-brand-muted uppercase tracking-wider mb-1.5">Email address</label>
-            <input
-              type="email"
-              placeholder="jane@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-brand-bg px-3 py-2 text-sm text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-sans"
-              id="auth-email-input"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full flex items-center justify-center gap-2 bg-brand-primary hover:bg-brand-accent text-brand-bg font-medium py-2.5 px-4 rounded-lg cursor-pointer select-none transition-all active:scale-[0.98]"
-            id="auth-submit-btn"
-          >
-            <Lock className="w-4 h-4" />
-            <span>{isSignUp ? 'Create secure account' : 'Access your dashboard'}</span>
-          </button>
-        </form>
+        </div>
 
         {/* Tab switcher */}
         <div className="mt-6 pt-5 border-t border-brand-border flex items-center justify-between text-xs">
@@ -154,10 +73,7 @@ export default function AuthModal() {
             {isSignUp ? 'Already have an account?' : "Don't have an account?"}
           </span>
           <button
-            onClick={() => {
-              setError('');
-              setIsSignUp(!isSignUp);
-            }}
+            onClick={() => setAuthModalView(isSignUp ? 'signIn' : 'signUp')}
             className="text-brand-accent hover:underline focus:outline-none font-medium"
             id="toggle-signup-signin-btn"
           >

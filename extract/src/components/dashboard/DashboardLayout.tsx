@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { UserButton, useUser } from '@clerk/nextjs';
 import { useApp } from '../../context/AppContext';
+import { BASELINE_DEMO_AUDIT } from '../../data/mockAudits';
 import { ResonanceWaveChart, PlatformBars } from '../charts/CustomBrandedCharts';
 import { 
   Signal, 
@@ -10,7 +12,6 @@ import {
   CreditCard, 
   Settings, 
   Bell, 
-  LogOut, 
   X, 
   Sparkles, 
   ArrowRight, 
@@ -30,15 +31,14 @@ import {
 
 export default function DashboardLayout() {
   const { 
-    user, 
     audits, 
     freeAuditsRemaining, 
     currentView, 
     setView, 
-    logout, 
     triggerAudit, 
     setUpgradeModalOpen 
   } = useApp();
+  const { user } = useUser();
 
   const [activeAuditId, setActiveAuditId] = useState<string | null>(null);
   
@@ -68,7 +68,7 @@ export default function DashboardLayout() {
   ] as const;
 
   // Retrieve selected audit
-  const selectedAudit = audits.find(a => a.id === activeAuditId) || audits[0];
+  const selectedAudit = audits.find(a => a.id === activeAuditId) || audits[0] || BASELINE_DEMO_AUDIT;
 
   const handleLaunchDashboardAudit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,15 +138,10 @@ export default function DashboardLayout() {
         <div className="px-4 py-3.5 border-b border-brand-border bg-brand-bg/40">
           <span className="block text-[10px] font-mono text-brand-muted uppercase mb-1.5">Connected profile</span>
           <div className="flex items-center gap-3">
-            <img 
-              src={user?.avatarUrl || "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Explorer"} 
-              alt="Profile avatar" 
-              className="w-8 h-8 rounded-lg bg-brand-card border border-brand-border"
-              referrerPolicy="no-referrer"
-            />
+            <UserButton />
             <div className="truncate">
               <span className="block text-xs font-semibold text-brand-text">{user?.firstName || 'Explorer'}</span>
-              <span className="block text-[9px] font-mono text-brand-muted truncate">{user?.email || 'unassigned@domain.com'}</span>
+              <span className="block text-[9px] font-mono text-brand-muted truncate">{user?.primaryEmailAddress?.emailAddress || 'unassigned@domain.com'}</span>
             </div>
           </div>
         </div>
@@ -199,14 +194,10 @@ export default function DashboardLayout() {
             )}
           </div>
 
-          <button
-            onClick={logout}
-            className="w-full flex items-center justify-center gap-2 py-2 text-xs font-mono text-brand-muted hover:text-red-400 hover:bg-red-950/20 rounded-lg transition-colors border border-transparent hover:border-red-900/40 cursor-pointer outline-none"
-            id="sidebar-logout-btn"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out Profile</span>
-          </button>
+          <div className="flex items-center justify-between rounded-lg border border-brand-border bg-brand-bg/50 px-3 py-2">
+            <span className="text-[10px] font-mono text-brand-muted uppercase">Account</span>
+            <UserButton />
+          </div>
         </div>
       </aside>
 
@@ -273,27 +264,13 @@ export default function DashboardLayout() {
               )}
             </div>
 
-            {/* Quick Mobile logout link */}
-            <button 
-              onClick={logout} 
-              className="lg:hidden p-1.5 bg-brand-bg border border-brand-border hover:bg-red-950/20 hover:border-red-900/40 rounded-lg text-brand-muted hover:text-red-400 transition-colors cursor-pointer outline-none"
-              title="Sign Out"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-
             {/* Connected User Badge */}
             <div className="flex items-center gap-2.5 pl-3 border-l border-brand-border">
               <div className="hidden md:block text-right">
                 <span className="block text-xs font-semibold text-brand-text">{user?.firstName || 'Explorer'}</span>
                 <span className="block text-[9px] font-mono text-brand-accent uppercase tracking-wider">Free Starter</span>
               </div>
-              <img
-                src={user?.avatarUrl || "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Explorer"}
-                alt="Profile avatar badge"
-                className="w-8 h-8 rounded-lg bg-brand-card border border-brand-border"
-                referrerPolicy="no-referrer"
-              />
+              <UserButton />
             </div>
           </div>
         </header>

@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { ClerkProvider } from '@clerk/nextjs'
 import { AppProvider } from '@/lib/context/AppContext'
 
 export const metadata: Metadata = {
@@ -82,6 +83,7 @@ export const viewport: Viewport = {
   themeColor: '#060B0D',
 }
 
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -95,7 +97,12 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>
       <body className="font-sans antialiased text-brand-text bg-brand-bg">
-        <AppProvider>{children}</AppProvider>
+
+        <ClerkProvider>
+          <AppProvider>
+            {children}
+          </AppProvider>
+        </ClerkProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

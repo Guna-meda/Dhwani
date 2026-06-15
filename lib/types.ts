@@ -36,12 +36,4 @@ export interface Audit {
   contentSuggestions: ContentSuggestion[]
 }
 
-export interface ClerkUser {
-  id: string
-  email: string
-  firstName: string
-  lastName: string
-  avatarUrl: string
-}
-
 export type DashboardView = 'overview' | 'audits' | 'competitors' | 'reports' | 'billing' | 'settings'

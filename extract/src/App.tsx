@@ -1,17 +1,22 @@
 import React from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider } from './context/AppContext';
 import LandingPage from './components/landing/LandingPage';
 import DashboardLayout from './components/dashboard/DashboardLayout';
 import AuthModal from './components/auth/AuthModal';
 import UpgradeModal from './components/ui/UpgradeModal';
+import { useUser } from '@clerk/nextjs';
 
 function AppContent() {
-  const { user } = useApp();
+  const { isLoaded, isSignedIn } = useUser();
+
+  if (!isLoaded) {
+    return null;
+  }
 
   return (
     <>
       {/* Dynamic Screen Routing */}
-      {!user ? (
+      {!isSignedIn ? (
         <LandingPage />
       ) : (
         <DashboardLayout />

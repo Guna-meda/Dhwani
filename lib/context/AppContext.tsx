@@ -1,18 +1,17 @@
 'use client'
 
-import React, { createContext, useContext, useState, useEffect } from 'react'
-import { Audit, ClerkUser, DashboardView } from '@/lib/types'
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useUser } from '@clerk/nextjs'
+import { Audit, DashboardView } from '@/lib/types'
 import { generateCustomAudit, BASELINE_DEMO_AUDIT } from '@/lib/data/mockAudits'
 
+type AuthModalView = 'signIn' | 'signUp'
+
 interface AppContextType {
-  user: ClerkUser | null
   audits: Audit[]
   freeAuditsRemaining: number
   currentView: DashboardView
   setView: (view: DashboardView) => void
-  login: (firstName: string, email: string) => void
-  signup: (firstName: string, lastName: string, email: string) => void
-  logout: () => void
   triggerAudit: (
     businessName: string,
     category: string,
@@ -20,6 +19,8 @@ interface AppContextType {
   ) => Promise<{ success: boolean; audit?: Audit; error?: string }>
   isAuthModalOpen: boolean
   setAuthModalOpen: (open: boolean) => void
+  authModalView: AuthModalView
+  setAuthModalView: (view: AuthModalView) => void
   isUpgradeModalOpen: boolean
   setUpgradeModalOpen: (open: boolean) => void
   onboardingData: { businessName: string; category: string; city: string } | null
@@ -29,13 +30,14 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined)
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<ClerkUser | null>(null)
+  const { isLoaded, isSignedIn, user } = useUser()
   const [audits, setAudits] = useState<Audit[]>([])
   const [freeAuditsRemaining, setFreeAuditsRemaining] = useState<number>(1)
   const [currentView, setView] = useState<DashboardView>('overview')
 
   // Modals
   const [isAuthModalOpen, setAuthModalOpen] = useState(false)
+  const [authModalView, setAuthModalView] = useState<AuthModalView>('signIn')
   const [isUpgradeModalOpen, setUpgradeModalOpen] = useState(false)
   const [onboardingData, setOnboardingData] = useState<{
     businessName: string
@@ -43,68 +45,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     city: string
   } | null>(null)
 
-  // Load state from localStorage on init
+  const clerkUser = useMemo(() => (isLoaded && isSignedIn ? user : null), [isLoaded, isSignedIn, user])
+
+  // Load state from localStorage and react to Clerk auth state.
   useEffect(() => {
-    const savedUser = localStorage.getItem('dhwani_user')
+    if (!isLoaded) {
+      return
+    }
+    if (!isSignedIn) {
+      localStorage.removeItem('dhwani_audits')
+      localStorage.removeItem('dhwani_free_count')
+      setAudits([BASELINE_DEMO_AUDIT])
+      setFreeAuditsRemaining(1)
+      setAuthModalOpen(false)
+      setAuthModalView('signIn')
+      return
+    }
+
     const savedAudits = localStorage.getItem('dhwani_audits')
     const savedCount = localStorage.getItem('dhwani_free_count')
 
-    if (savedUser) {
-      setUser(JSON.parse(savedUser))
-    }
-    if (savedAudits) {
-      setAudits(JSON.parse(savedAudits))
-    } else {
-      setAudits([BASELINE_DEMO_AUDIT])
-    }
-    if (savedCount !== null) {
-      setFreeAuditsRemaining(Number(savedCount))
-    }
-  }, [])
-
-  const login = (firstName: string, email: string) => {
-    const mockUser: ClerkUser = {
-      id: `usr_${Math.random().toString(36).substr(2, 9)}`,
-      email,
-      firstName: firstName || 'Explorer',
-      lastName: 'User',
-      avatarUrl: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${encodeURIComponent(
-        firstName || 'Explorer'
-      )}`,
-    }
-    setUser(mockUser)
-    localStorage.setItem('dhwani_user', JSON.stringify(mockUser))
-    setAuthModalOpen(false)
-
-    // If there is pending onboarding data, convert it directly into their first audit!
-    if (onboardingData) {
-      const generated = generateCustomAudit(
-        onboardingData.businessName,
-        onboardingData.category,
-        onboardingData.city
-      )
-      const updatedAudits = [generated]
-      setAudits(updatedAudits)
-      localStorage.setItem('dhwani_audits', JSON.stringify(updatedAudits))
-      setFreeAuditsRemaining(0)
-      localStorage.setItem('dhwani_free_count', '0')
-      setOnboardingData(null)
-      setView('overview')
-    }
-  }
-
-  const signup = (firstName: string, lastName: string, email: string) => {
-    const mockUser: ClerkUser = {
-      id: `usr_${Math.random().toString(36).substr(2, 9)}`,
-      email,
-      firstName: firstName || 'Explorer',
-      lastName: lastName || 'User',
-      avatarUrl: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${encodeURIComponent(
-        firstName || 'Explorer'
-      )}`,
-    }
-    setUser(mockUser)
-    localStorage.setItem('dhwani_user', JSON.stringify(mockUser))
+    setAudits(savedAudits ? JSON.parse(savedAudits) : [BASELINE_DEMO_AUDIT])
+    setFreeAuditsRemaining(savedCount !== null ? Number(savedCount) : 1)
     setAuthModalOpen(false)
 
     if (onboardingData) {
@@ -121,25 +83,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setOnboardingData(null)
       setView('overview')
     }
-  }
-
-  const logout = () => {
-    setUser(null)
-    setAudits([BASELINE_DEMO_AUDIT])
-    setFreeAuditsRemaining(1)
-    localStorage.removeItem('dhwani_user')
-    localStorage.removeItem('dhwani_audits')
-    localStorage.removeItem('dhwani_free_count')
-    setView('overview')
-  }
+  }, [isLoaded, isSignedIn, onboardingData, setAuthModalOpen, setAuthModalView, setOnboardingData, setView])
 
   const triggerAudit = async (
     businessName: string,
     category: string,
     city: string
   ): Promise<{ success: boolean; audit?: Audit; error?: string }> => {
-    if (!user) {
+    if (!clerkUser) {
       setOnboardingData({ businessName, category, city })
+      setAuthModalView('signIn')
       setAuthModalOpen(true)
       return { success: false, error: 'Auth required' }
     }
@@ -164,17 +117,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider
       value={{
-        user,
         audits,
         freeAuditsRemaining,
         currentView,
         setView,
-        login,
-        signup,
-        logout,
         triggerAudit,
         isAuthModalOpen,
         setAuthModalOpen,
+        authModalView,
+        setAuthModalView,
         isUpgradeModalOpen,
         setUpgradeModalOpen,
         onboardingData,

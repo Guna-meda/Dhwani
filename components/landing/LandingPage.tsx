@@ -24,7 +24,12 @@ import {
 } from 'lucide-react';
 
 export default function LandingPage() {
-  const { user, login, signup, triggerAudit, setAuthModalOpen, setView, onboardingData } = useApp();
+  const {
+    triggerAudit,
+    setAuthModalOpen,
+    setAuthModalView,
+    setView,
+  } = useApp();
   
   // Interactive Live Demo custom audit Form
   const [bizName, setBizName] = useState('');
@@ -111,34 +116,26 @@ export default function LandingPage() {
           </nav>
 
           <div className="flex items-center gap-3">
-            {user ? (
-              <>
-                <button 
-                  onClick={() => setView('overview')} 
-                  className="bg-brand-surface border border-brand-border hover:bg-brand-card text-brand-accent px-4 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer"
-                  id="nav-go-dashboard-btn"
-                >
-                  Dashboard ({user.firstName})
-                </button>
-              </>
-            ) : (
-              <>
-                <button 
-                  onClick={() => setAuthModalOpen(true)}
-                  className="text-brand-muted hover:text-brand-text text-xs font-mono px-3 py-1.5 transition-colors cursor-pointer"
-                  id="nav-signin-btn"
-                >
-                  Log In
-                </button>
-                <button 
-                  onClick={() => setAuthModalOpen(true)}
-                  className="bg-brand-primary hover:bg-brand-accent text-brand-bg text-xs font-semibold px-4 py-1.5 rounded-lg cursor-pointer transition-all hover:shadow-[0_0_15px_rgba(42,161,152,0.3)]"
-                  id="nav-signup-btn"
-                >
-                  Get Started
-                </button>
-              </>
-            )}
+            <button 
+              onClick={() => {
+                setAuthModalView('signIn')
+                setAuthModalOpen(true)
+              }}
+              className="text-brand-muted hover:text-brand-text text-xs font-mono px-3 py-1.5 transition-colors cursor-pointer"
+              id="nav-signin-btn"
+            >
+              Log In
+            </button>
+            <button 
+              onClick={() => {
+                setAuthModalView('signUp')
+                setAuthModalOpen(true)
+              }}
+              className="bg-brand-primary hover:bg-brand-accent text-brand-bg text-xs font-semibold px-4 py-1.5 rounded-lg cursor-pointer transition-all hover:shadow-[0_0_15px_rgba(42,161,152,0.3)]"
+              id="nav-signup-btn"
+            >
+              Get Started
+            </button>
           </div>
         </div>
       </header>
