@@ -1,135 +1,233 @@
 'use client'
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { useUser } from '@clerk/nextjs'
-import { Audit, DashboardView } from '@/lib/types'
-import { generateCustomAudit, BASELINE_DEMO_AUDIT } from '@/lib/data/mockAudits'
+/**
+ * lib/context/AppContext.tsx
+ *
+ * Replaces the localStorage-based mock approach with real backend calls.
+ * The context drives an onboarding state machine:
+ *
+ *   not signed in → landing page
+ *   signed in, next_step = user    → Screen 1
+ *   signed in, next_step = company → Screen 2
+ *   signed in, next_step = product → Screen 3
+ *   signed in, next_step = done    → Screen 4 / 5 / 6 / 7
+ */
+
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { useAuth } from '@clerk/nextjs'
+import {
+  getBrandHealthProgress,
+  getDiscoveryProgress,
+  getOnboardingStatus,
+  type OnboardingStatus,
+  type Prompt,
+  type ProgressResponse,
+} from '@/lib/api/client'
+
+// ─── screen enum ──────────────────────────────────────────────────────────────
+
+export type AppScreen =
+  | 'landing'       // not signed in
+  | 'loading'       // waiting for Clerk / status check
+  | 'onboarding-user'
+  | 'onboarding-company'
+  | 'onboarding-product'
+  | 'choose-audit'  // Screen 4
+  | 'review-prompts'// Screen 5
+  | 'audit-progress'// Screen 6
+  | 'dashboard'     // Screen 7
+
+export type DashboardView = 'overview' | 'audits' | 'competitors' | 'reports' | 'billing' | 'settings'
+export type AuditType = 'discovery' | 'brandhealth'
 
 type AuthModalView = 'signIn' | 'signUp'
 
+// ─── context shape ────────────────────────────────────────────────────────────
+
 interface AppContextType {
-  audits: Audit[]
-  freeAuditsRemaining: number
+  // screen routing
+  screen: AppScreen
+  setScreen: (s: AppScreen) => void
+
+  // product set after onboarding step 3
+  productId: string | null
+  setProductId: (id: string | null) => void
+
+  // audit flow chosen on Screen 4
+  auditType: AuditType | null
+  setAuditType: (f: AuditType) => void
+
+  // prompts on Screen 5
+  prompts: Prompt[]
+  setPrompts: (p: Prompt[]) => void
+
+  // progress on Screen 6
+  progress: ProgressResponse | null
+  setProgress: (p: ProgressResponse | null) => void
+  setAuditProgress: (p: ProgressResponse | null) => void
+
+  // real summary from backend (Screen 7)
+  summary: Record<string, unknown> | null
+  setSummary: (s: Record<string, unknown> | null) => void
+
+  // dashboard sub-view
   currentView: DashboardView
-  setView: (view: DashboardView) => void
-  triggerAudit: (
-    businessName: string,
-    category: string,
-    city: string
-  ) => Promise<{ success: boolean; audit?: Audit; error?: string }>
+  setView: (v: DashboardView) => void
+
+  // auth modal
   isAuthModalOpen: boolean
   setAuthModalOpen: (open: boolean) => void
   authModalView: AuthModalView
-  setAuthModalView: (view: AuthModalView) => void
+  setAuthModalView: (v: AuthModalView) => void
+
+  // upgrade modal
   isUpgradeModalOpen: boolean
   setUpgradeModalOpen: (open: boolean) => void
-  onboardingData: { businessName: string; category: string; city: string } | null
-  setOnboardingData: (data: { businessName: string; category: string; city: string } | null) => void
+
+  // helper: refresh onboarding status from server
+  getToken: () => Promise<string>
+  refreshOnboardingStatus: () => Promise<void>
 }
+
+// ─── context ──────────────────────────────────────────────────────────────────
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const { isLoaded, isSignedIn, user } = useUser()
-  const [audits, setAudits] = useState<Audit[]>([])
-  const [freeAuditsRemaining, setFreeAuditsRemaining] = useState<number>(1)
+  const { isLoaded, isSignedIn, userId, getToken: getClerkToken } = useAuth()
+
+  const [screen, setScreen] = useState<AppScreen>('loading')
+  const [productId, setProductId] = useState<string | null>(null)
+  const [auditType, setAuditType] = useState<AuditType | null>(null)
+  const [prompts, setPrompts] = useState<Prompt[]>([])
+  const [progress, setProgress] = useState<ProgressResponse | null>(null)
+  const [summary, setSummary] = useState<Record<string, unknown> | null>(null)
   const [currentView, setView] = useState<DashboardView>('overview')
 
-  // Modals
   const [isAuthModalOpen, setAuthModalOpen] = useState(false)
   const [authModalView, setAuthModalView] = useState<AuthModalView>('signIn')
   const [isUpgradeModalOpen, setUpgradeModalOpen] = useState(false)
-  const [onboardingData, setOnboardingData] = useState<{
-    businessName: string
-    category: string
-    city: string
-  } | null>(null)
 
-  const clerkUser = useMemo(() => (isLoaded && isSignedIn ? user : null), [isLoaded, isSignedIn, user])
+  const getToken = useCallback(async () => {
+    if (typeof window !== 'undefined' && userId) {
+      window.localStorage.setItem('dhwani_dev_clerk_id', userId)
+    }
+    return (await getClerkToken()) ?? ''
+  }, [getClerkToken, userId])
 
-  // Load state from localStorage and react to Clerk auth state.
+  // ── resolve which screen a returning user should see ─────────────────────
+  const resolveScreenFromStatus = useCallback(
+    async (status: OnboardingStatus, token: string) => {
+      const { next_step, product_id } = status
+
+      if (next_step !== 'done') {
+        setScreen(`onboarding-${next_step}` as AppScreen)
+        return
+      }
+
+      // Onboarding complete — we have a product
+      if (product_id) {
+        setProductId(product_id)
+      }
+
+      // Check whether any audit has already been confirmed and is running/done
+      if (product_id) {
+        let progressData: ProgressResponse | null = null
+
+        // Try discovery first, then brandhealth
+        for (const flow of ['discovery', 'brandhealth'] as AuditType[]) {
+          try {
+            const p = flow === 'discovery'
+              ? await getDiscoveryProgress(token, product_id)
+              : await getBrandHealthProgress(token, product_id)
+            if (p.total > 0) {
+              progressData = p
+              setAuditType(flow)
+              break
+            }
+          } catch {
+            // 404 / not started — try next
+          }
+        }
+
+        if (progressData) {
+          if (progressData.status === 'DONE') {
+            setScreen('dashboard')
+          } else if (progressData.status === 'RUNNING') {
+            setProgress(progressData)
+            setScreen('audit-progress')
+          } else {
+            // IDLE with total > 0 means prompts were initialised but not confirmed
+            setScreen('review-prompts')
+          }
+          return
+        }
+      }
+
+      // No audit started yet
+      setScreen('choose-audit')
+    },
+    []
+  )
+
+  const refreshOnboardingStatus = useCallback(async () => {
+    // Wait for Clerk session to be fully ready.
+    await new Promise(r => setTimeout(r, 500))
+    const token = await getToken()
+    if (!token) return
+    try {
+      const status = await getOnboardingStatus(token)
+      await resolveScreenFromStatus(status, token)
+    } catch (err) {
+      console.error('Failed to fetch onboarding status', err)
+      setScreen('onboarding-user')
+    }
+  }, [getToken, resolveScreenFromStatus])
+
+  // ── react to Clerk auth changes ───────────────────────────────────────────
   useEffect(() => {
-    if (!isLoaded) {
+    if (!isLoaded) return
+
+    if (!isSignedIn || !userId) {
+      setScreen('landing')
+      setProductId(null)
+      setAuditType(null)
+      setPrompts([])
+      setProgress(null)
+      setSummary(null)
       return
     }
-    if (!isSignedIn) {
-      localStorage.removeItem('dhwani_audits')
-      localStorage.removeItem('dhwani_free_count')
-      setAudits([BASELINE_DEMO_AUDIT])
-      setFreeAuditsRemaining(1)
-      setAuthModalOpen(false)
-      setAuthModalView('signIn')
-      return
-    }
 
-    const savedAudits = localStorage.getItem('dhwani_audits')
-    const savedCount = localStorage.getItem('dhwani_free_count')
-
-    setAudits(savedAudits ? JSON.parse(savedAudits) : [BASELINE_DEMO_AUDIT])
-    setFreeAuditsRemaining(savedCount !== null ? Number(savedCount) : 1)
-    setAuthModalOpen(false)
-
-    if (onboardingData) {
-      const generated = generateCustomAudit(
-        onboardingData.businessName,
-        onboardingData.category,
-        onboardingData.city
-      )
-      const updatedAudits = [generated]
-      setAudits(updatedAudits)
-      localStorage.setItem('dhwani_audits', JSON.stringify(updatedAudits))
-      setFreeAuditsRemaining(0)
-      localStorage.setItem('dhwani_free_count', '0')
-      setOnboardingData(null)
-      setView('overview')
-    }
-  }, [isLoaded, isSignedIn, onboardingData, setAuthModalOpen, setAuthModalView, setOnboardingData, setView])
-
-  const triggerAudit = async (
-    businessName: string,
-    category: string,
-    city: string
-  ): Promise<{ success: boolean; audit?: Audit; error?: string }> => {
-    if (!clerkUser) {
-      setOnboardingData({ businessName, category, city })
-      setAuthModalView('signIn')
-      setAuthModalOpen(true)
-      return { success: false, error: 'Auth required' }
-    }
-
-    if (freeAuditsRemaining <= 0) {
-      setUpgradeModalOpen(true)
-      return { success: false, error: 'Paywall triggered' }
-    }
-
-    const newAudit = generateCustomAudit(businessName, category, city)
-    const updatedAudits = [newAudit, ...audits.filter((a) => a.id !== 'demo-acme-seo')]
-    setAudits(updatedAudits)
-    localStorage.setItem('dhwani_audits', JSON.stringify(updatedAudits))
-
-    const remaining = freeAuditsRemaining - 1
-    setFreeAuditsRemaining(remaining)
-    localStorage.setItem('dhwani_free_count', String(remaining))
-
-    return { success: true, audit: newAudit }
-  }
+    // Signed in — check where they are in onboarding
+    refreshOnboardingStatus()
+  }, [isLoaded, isSignedIn, userId, refreshOnboardingStatus])
 
   return (
     <AppContext.Provider
       value={{
-        audits,
-        freeAuditsRemaining,
+        screen,
+        setScreen,
+        productId,
+        setProductId,
+        auditType,
+        setAuditType,
+        prompts,
+        setPrompts,
+        progress,
+        setProgress,
+        setAuditProgress: setProgress,
+        summary,
+        setSummary,
         currentView,
         setView,
-        triggerAudit,
         isAuthModalOpen,
         setAuthModalOpen,
         authModalView,
         setAuthModalView,
         isUpgradeModalOpen,
         setUpgradeModalOpen,
-        onboardingData,
-        setOnboardingData,
+        getToken,
+        refreshOnboardingStatus,
       }}
     >
       {children}
@@ -138,9 +236,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useApp() {
-  const context = useContext(AppContext)
-  if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider')
-  }
-  return context
+  const ctx = useContext(AppContext)
+  if (!ctx) throw new Error('useApp must be used within AppProvider')
+  return ctx
 }

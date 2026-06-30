@@ -8,7 +8,6 @@ export default function AuthModal() {
   const {
     isAuthModalOpen,
     setAuthModalOpen,
-    onboardingData,
     authModalView,
     setAuthModalView,
   } = useApp()
@@ -56,9 +55,7 @@ export default function AuthModal() {
           </h2>
 
           <p className="text-xs text-brand-muted mt-1 max-w-xs">
-            {onboardingData
-              ? `Authenticate to generate the custom audit for "${onboardingData.businessName}"`
-              : 'Analyze recommendation presence on GPT, Claude, and Gemini'}
+            Analyze recommendation presence on GPT, Claude, and Gemini
           </p>
 
           <div className="flex items-center gap-1 bg-brand-primary/10 border border-brand-primary/20 rounded-md px-2.5 py-0.5 mt-2.5 text-[10px] text-brand-accent font-mono">
