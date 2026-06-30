@@ -1,6 +1,7 @@
 'use client'
 
-import { Signal } from 'lucide-react'
+import { Signal, LogOut } from 'lucide-react'
+import { useClerk } from '@clerk/nextjs'
 
 interface Props {
   step: number
@@ -11,8 +12,19 @@ interface Props {
 }
 
 export default function OnboardingShell({ step, totalSteps, title, subtitle, children }: Props) {
+  const { signOut } = useClerk()
+
   return (
-    <div className="min-h-screen bg-brand-bg flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-brand-bg flex flex-col items-center justify-center p-4 relative">
+      {/* Sign out — always available, even mid-onboarding */}
+      <button
+        onClick={() => signOut({ redirectUrl: '/' })}
+        className="absolute top-4 right-4 flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
+      >
+        <LogOut className="w-3.5 h-3.5" />
+        Sign out
+      </button>
+
       {/* Logo */}
       <div className="flex items-center gap-2 mb-10">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-brand-card border border-brand-border text-brand-accent">

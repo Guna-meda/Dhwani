@@ -1,6 +1,0 @@
-{
-  "name": "Dhwani",
-  "description": "Premium SaaS for AI Search visibility audit. Gain insight into how search engines like ChatGPT, Claude, Gemini, and Perplexity recommend your brand.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

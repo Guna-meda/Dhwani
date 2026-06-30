@@ -3,7 +3,7 @@
  * All calls to the Express backend. Clerk token is injected by callers.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1'
 const DEV_CLERK_ID_KEY = 'dhwani_dev_clerk_id'
 
 async function request<T>(
