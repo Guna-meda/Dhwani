@@ -298,7 +298,7 @@ export default function DashboardLayout() {
   }
 
   const mentionRate = combined.mention_rate_pct ?? 0
-  const totalPrompts = 'total_prompts' in combined ? combined.total_prompts : combined.prompts_run
+  const totalPrompts = 'total_prompts' in combined ? combined.total_prompts : 'prompts_run' in combined ? combined.prompts_run : 0
   const mentionedCount = combined.mentioned_count ?? 0
 
   return (
@@ -334,7 +334,7 @@ export default function DashboardLayout() {
                 onClick={() => setNav(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 text-xs font-medium rounded-lg text-left transition-colors ${
                   isActive
-                    ? 'bg-brand-primary/10 text-brand-accent border-l-2 border-brand-primary pl-[10px]'
+                    ? 'bg-brand-primary/10 text-brand-accent border-l-2 border-brand-primary pl-2.5'
                     : 'text-brand-muted hover:text-brand-text hover:bg-brand-card/50'
                 }`}
               >
@@ -470,7 +470,7 @@ export default function DashboardLayout() {
                             {m?.mentioned_count ?? 0} / {run ?? '—'} · <span className="text-brand-accent font-semibold">{pct(rate)}</span>
                           </span>
                         </div>
-                        <div className="h-2 w-full bg-brand-card rounded-full overflow-hidden border border-white/[0.02]">
+                        <div className="h-2 w-full bg-brand-card rounded-full overflow-hidden border border-white/2">
                           <div
                             className="h-full rounded-full transition-all duration-700"
                             style={{ width: `${Math.min(rate, 100)}%`, backgroundColor: meta.color }}
