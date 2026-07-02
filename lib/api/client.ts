@@ -27,6 +27,17 @@ async function request<T>(
   if (!res.ok) {
     throw new ApiError(data?.message ?? `Request failed: ${res.status}`, res.status, data)
   }
+
+  // Backend wraps every successful response in an ApiResponse envelope:
+  // { statusCode, data, message, success }. Every controller does this
+  // (see ApiResponse usage across onboarding/discovery/brandhealth routes).
+  // Without unwrapping here, callers were reading fields (like next_step,
+  // or _id on a freshly created product) off the *envelope* instead of the
+  // real payload — which is why they came back undefined even though the
+  // request succeeded and the server logs showed 200s.
+  if (data && typeof data === 'object' && 'data' in data) {
+    return data.data as T
+  }
   return data as T
 }
 

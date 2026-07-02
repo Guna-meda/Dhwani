@@ -2,7 +2,7 @@
 
 import { useApp } from '@/lib/context/AppContext'
 import { X, Shield, Signal } from 'lucide-react'
-import { SignIn, SignUp } from '@clerk/nextjs'
+import { SignIn, SignUp, useAuth } from '@clerk/nextjs'
 
 export default function AuthModal() {
   const {
@@ -11,8 +11,18 @@ export default function AuthModal() {
     authModalView,
     setAuthModalView,
   } = useApp()
+  const { isSignedIn } = useAuth()
 
-  if (!isAuthModalOpen) return null
+  // Never mount <SignIn>/<SignUp> while a session already exists. Clerk
+  // refuses to render them in that case and force-navigates via its own
+  // afterSignIn redirect — which is what was bouncing people back out.
+  // AppContext also closes the modal once isSignedIn flips true, but that
+  // happens in an effect, and effects on this component (a descendant of
+  // AppProvider) run before AppProvider's own effect does. So on the exact
+  // render where isSignedIn first becomes true, isAuthModalOpen can still
+  // be true for one paint — checking isSignedIn here directly, in the same
+  // render pass, closes that gap instead of racing it.
+  if (!isAuthModalOpen || isSignedIn) return null
 
   const isSignUp = authModalView === 'signUp'
 

@@ -1,980 +1,686 @@
 'use client'
 
-import { useState } from 'react'
-import { UserButton, useUser } from '@clerk/nextjs'
+import { useEffect, useMemo, useState } from 'react'
+import { UserButton, useUser, useClerk } from '@clerk/nextjs'
 import { useApp } from '@/lib/context/AppContext'
-import { BASELINE_DEMO_AUDIT } from '@/lib/data/mockAudits'
-import { ResonanceWaveChart, PlatformBars } from '@/components/charts/CustomBrandedCharts'
-import { 
-  Signal, 
-  LayoutDashboard, 
-  Search, 
-  Users, 
-  FileCheck, 
-  CreditCard, 
-  Settings, 
-  Bell, 
-  X, 
-  Sparkles, 
-  ArrowRight, 
-  HelpCircle, 
-  CheckCircle, 
-  Play, 
-  Share2, 
-  Plus, 
-  MapPin, 
-  Sliders, 
-  Briefcase, 
-  AlertCircle, 
-  Download, 
-  Cpu, 
-  RefreshCw 
-} from 'lucide-react';
+import {
+  getDiscoverySummary,
+  getBrandHealthSummary,
+  ApiError,
+} from '@/lib/api/client'
+import {
+  Signal,
+  LayoutDashboard,
+  MessageSquareText,
+  Users,
+  Tags,
+  LogOut,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  ChevronDown,
+  ChevronRight,
+  Link2,
+  Clock,
+  AlertCircle,
+} from 'lucide-react'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real backend shapes — mirrors models/discoverySummary.model.js and
+// models/brandhealthsummary.model.js exactly. This dashboard renders nothing
+// that isn't actually computed by the backend.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Engine = 'chatgpt' | 'perplexity' | 'gemini'
+
+const ENGINE_META: Record<Engine, { label: string; color: string }> = {
+  chatgpt:    { label: 'ChatGPT',    color: '#2AA198' },
+  perplexity: { label: 'Perplexity', color: '#8EE6DD' },
+  gemini:     { label: 'Gemini',     color: '#1F7A72' },
+}
+
+const INTENT_LABELS: Record<string, string> = {
+  pricing:              'Pricing',
+  feature_integration:  'Features & Integration',
+  reputation:           'Reputation',
+  comparison:           'Comparison',
+  legitimacy:           'Legitimacy',
+}
+
+const SENTIMENT_META: Record<string, { label: string; className: string }> = {
+  recommended: { label: 'Recommended', className: 'text-brand-accent bg-brand-accent/10 border-brand-accent/30' },
+  mentioned:   { label: 'Mentioned',   className: 'text-brand-primary bg-brand-primary/10 border-brand-primary/30' },
+  not_found:   { label: 'Not found',   className: 'text-brand-muted bg-brand-card border-brand-border' },
+  negative:    { label: 'Negative',    className: 'text-red-300 bg-red-950/30 border-red-900/40' },
+}
+
+interface DiscoveryEngineMetric {
+  total_prompts?: number
+  mentioned_count?: number
+  mention_rate_pct?: number
+  avg_position?: number | null
+}
+
+interface DiscoveryPerPrompt {
+  promptId: string
+  prompt_text: string
+  engine: Engine
+  mentioned: boolean
+  position: number | null
+  raw_text: string | null
+}
+
+interface CompetitorEntry {
+  name: string
+  appearances: number
+  avg_mention_rank: number
+  engines_seen_in: Engine[]
+}
+
+interface CitationEntry {
+  domain: string
+  citation_count: number
+  citation_share_pct: number
+}
+
+interface DiscoverySummaryData {
+  engines_run: Engine[]
+  combined: DiscoveryEngineMetric
+  per_engine: Record<string, DiscoveryEngineMetric>
+  per_prompt: DiscoveryPerPrompt[]
+  competitor_landscape: CompetitorEntry[]
+  citation_source_map: CitationEntry[]
+  status: 'PARTIAL' | 'COMPLETE'
+  createdAt?: string
+}
+
+interface BrandHealthEngineMetric {
+  prompts_run?: number
+  mentioned_count?: number
+  not_found_count?: number
+  mention_rate_pct?: number
+}
+
+interface BrandHealthPerPrompt {
+  promptId: string
+  prompt_text: string
+  intent_category: string | null
+  engine: Engine
+  mentioned: boolean
+  sentiment: string | null
+  raw_text: string | null
+}
+
+interface BrandHealthSummaryData {
+  engines_run: Engine[]
+  combined: BrandHealthEngineMetric
+  per_engine: Record<string, BrandHealthEngineMetric>
+  per_intent_category: Record<string, BrandHealthEngineMetric>
+  per_prompt: BrandHealthPerPrompt[]
+  status: 'PARTIAL' | 'COMPLETE'
+  createdAt?: string
+}
+
+// Defensive: Mongoose `Map`-typed schema fields (per_engine, per_intent_category)
+// can round-trip oddly through JSON depending on driver/version. This just
+// keeps the UI from crashing if one ever arrives as something unexpected —
+// it can't recover data that genuinely wasn't sent.
+function asRecord<T>(value: unknown): Record<string, T> {
+  if (!value) return {}
+  if (value instanceof Map) return Object.fromEntries(value as Map<string, T>)
+  if (typeof value === 'object') return value as Record<string, T>
+  return {}
+}
+
+function pct(n: number | undefined | null): string {
+  return `${Math.round(n ?? 0)}%`
+}
+
+function formatDate(iso?: string): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    })
+  } catch {
+    return ''
+  }
+}
+
+// Group flat per-prompt × engine rows into one row per prompt, with each
+// engine's result attached — this is what makes a 30–75 row flat list into a
+// readable pivot table instead of a wall of near-duplicate text.
+function groupByPrompt<T extends { promptId: string; prompt_text: string; engine: Engine }>(
+  rows: T[]
+) {
+  const map = new Map<string, { prompt_text: string; byEngine: Partial<Record<Engine, T>> }>()
+  for (const row of rows) {
+    if (!map.has(row.promptId)) {
+      map.set(row.promptId, { prompt_text: row.prompt_text, byEngine: {} })
+    }
+    map.get(row.promptId)!.byEngine[row.engine] = row
+  }
+  return Array.from(map.entries()).map(([promptId, v]) => ({ promptId, ...v }))
+}
+
+type NavId = 'overview' | 'prompts' | 'landscape'
 
 export default function DashboardLayout() {
-  const { 
-    audits, 
-    freeAuditsRemaining, 
-    currentView, 
-    setView, 
-    triggerAudit, 
-    setUpgradeModalOpen 
-  } = useApp();
-  const { user } = useUser();
+  const {
+    productId,
+    auditType,
+    summary,
+    setSummary,
+    getToken,
+  } = useApp()
+  const { user } = useUser()
+  const { signOut } = useClerk()
 
-  const [activeAuditId, setActiveAuditId] = useState<string | null>(null);
-  
-  // Local Audit Creator Form for Dashboard
-  const [bizName, setBizName] = useState('');
-  const [category, setCategory] = useState('');
-  const [city, setCity] = useState('');
-  const [isAuditing, setIsAuditing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
+  const [nav, setNav] = useState<NavId>('overview')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null)
 
-  // Notifications drawer simulation
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [activeNotificationCount, setActiveNotificationCount] = useState(3);
+  // Fetch the summary ourselves if it isn't already in context — covers a
+  // direct reload landing on the dashboard, where nothing upstream fetched it.
+  useEffect(() => {
+    if (summary || !productId || !auditType) return
+    let cancelled = false
 
-  // Copied share state indicator
-  const [isCopied, setIsCopied] = useState(false);
-
-  // Menu items config
-  const menuItems = [
-    { id: 'overview', name: 'Overview', icon: LayoutDashboard },
-    { id: 'audits', name: 'Audits', icon: Search },
-    { id: 'competitors', name: 'Competitors', icon: Users },
-    { id: 'reports', name: 'Reports', icon: FileCheck },
-    { id: 'billing', name: 'Billing', icon: CreditCard },
-    { id: 'settings', name: 'Settings', icon: Settings },
-  ] as const;
-
-  // Retrieve selected audit
-  const selectedAudit = audits.find(a => a.id === activeAuditId) || audits[0] || BASELINE_DEMO_AUDIT;
-
-  const handleLaunchDashboardAudit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    if (!bizName || !category || !city) {
-      setErrorMsg('Please enter all parameters to spawn the query scanners');
-      return;
-    }
-
-    setIsAuditing(true);
-
-    try {
-      const response = await triggerAudit(bizName, category, city);
-      setIsAuditing(false);
-
-      if (!response.success) {
-        if (response.error === 'Paywall triggered') {
-          setErrorMsg("You've used your free audit. Upgrade to Pro to unlock unlimited searches.");
-        } else {
-          setErrorMsg('An unexpected authentication error occurred.');
+    const load = async () => {
+      setLoading(true)
+      setError('')
+      const MAX_ATTEMPTS = 4
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          const token = await getToken()
+          const data = auditType === 'discovery'
+            ? await getDiscoverySummary(token, productId)
+            : await getBrandHealthSummary(token, productId)
+          if (!cancelled) setSummary(data)
+          break
+        } catch (err) {
+          const notReadyYet = err instanceof ApiError && err.status === 404
+          if (notReadyYet && attempt < MAX_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 3000))
+            continue
+          }
+          if (!cancelled) {
+            setError(err instanceof ApiError ? err.message : 'Could not load your audit results.')
+          }
+          break
         }
-        return;
       }
-
-      setSuccessMsg('Audit completed successfully! View populated below.');
-      setActiveAuditId(response.audit?.id || null);
-      
-      // Clear fields
-      setBizName('');
-      setCategory('');
-      setCity('');
-
-      // Redirect to detailed audits view
-      setView('audits');
-    } catch (err) {
-      setIsAuditing(false);
-      setErrorMsg('Failed to generate audit. Please try again.');
+      if (!cancelled) setLoading(false)
     }
-  };
 
-  const copyReportCardLink = () => {
-    if (!selectedAudit) return;
-    const shareText = `DHWANI AI VISIBILITY STATUS for ${selectedAudit.businessName}: ${selectedAudit.visibilityScore}% Visibility. Top competitor: ${selectedAudit.topCompetitor}.`;
-    navigator.clipboard.writeText(shareText);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
+    load()
+    return () => { cancelled = true }
+  }, [summary, productId, auditType, getToken, setSummary])
+
+  const isDiscovery = auditType === 'discovery'
+
+  const discovery = isDiscovery ? (summary as unknown as DiscoverySummaryData | null) : null
+  const brandHealth = !isDiscovery ? (summary as unknown as BrandHealthSummaryData | null) : null
+
+  const enginesRun = (discovery?.engines_run ?? brandHealth?.engines_run ?? []) as Engine[]
+  const combined = discovery?.combined ?? brandHealth?.combined
+  const perEngine = asRecord<DiscoveryEngineMetric | BrandHealthEngineMetric>(
+    discovery?.per_engine ?? brandHealth?.per_engine
+  )
+  const status = discovery?.status ?? brandHealth?.status
+  const createdAt = discovery?.createdAt ?? brandHealth?.createdAt
+
+  const groupedPrompts = useMemo(() => {
+    if (discovery) return groupByPrompt(discovery.per_prompt ?? [])
+    if (brandHealth) return groupByPrompt(brandHealth.per_prompt ?? [])
+    return []
+  }, [discovery, brandHealth])
+
+  const intentBreakdown = useMemo(
+    () => asRecord<BrandHealthEngineMetric>(brandHealth?.per_intent_category),
+    [brandHealth]
+  )
+
+  const navItems: { id: NavId; label: string; icon: typeof LayoutDashboard }[] = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'prompts', label: 'Prompt results', icon: MessageSquareText },
+    isDiscovery
+      ? { id: 'landscape', label: 'Competitors', icon: Users }
+      : { id: 'landscape', label: 'Categories', icon: Tags },
+  ]
+
+  // ── Guard states ──────────────────────────────────────────────────────────
+
+  if (!productId || !auditType) {
+    return (
+      <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <AlertCircle className="w-8 h-8 text-brand-muted mx-auto mb-3" />
+          <p className="text-sm text-brand-text font-medium">No active audit found</p>
+          <p className="text-xs text-brand-muted mt-1">
+            Something's missing from your session — try refreshing the page.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-brand-bg flex items-center justify-center">
+        <div className="flex items-center gap-2.5 text-brand-muted">
+          <Signal className="w-5 h-5 animate-pulse text-brand-accent" />
+          <span className="text-sm font-mono">Loading your results…</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !combined) {
+    return (
+      <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
+        <div className="text-center max-w-sm">
+          <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+          <p className="text-sm text-brand-text font-medium">
+            {error || 'Your audit results aren\u2019t ready yet.'}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-brand-accent hover:underline"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Try again
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const mentionRate = combined.mention_rate_pct ?? 0
+  const totalPrompts = 'total_prompts' in combined ? combined.total_prompts : combined.prompts_run
+  const mentionedCount = combined.mentioned_count ?? 0
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-text flex overflow-hidden font-sans" id="dashboard-layout">
-      
-      {/* 1. LEFT SIDEBAR */}
-      <aside className="hidden lg:flex flex-col w-64 bg-brand-surface border-r border-brand-border shrink-0 z-20">
-        <div className="h-16 flex items-center gap-2.5 px-6 border-b border-brand-border cursor-pointer" onClick={() => setView('overview')} id="sidebar-logo-badge">
+    <div className="min-h-screen bg-brand-bg text-brand-text flex overflow-hidden font-sans">
+
+      {/* SIDEBAR */}
+      <aside className="hidden lg:flex flex-col w-60 bg-brand-surface border-r border-brand-border shrink-0">
+        <div className="h-16 flex items-center gap-2.5 px-6 border-b border-brand-border">
           <div className="w-8 h-8 rounded-lg bg-brand-bg border border-brand-primary/20 flex items-center justify-center text-brand-primary">
-            <Signal className="w-4 h-4 animate-pulse" />
+            <Signal className="w-4 h-4" />
           </div>
-          <div>
-            <span className="font-display font-semibold text-sm tracking-tight text-brand-text block">Dhwani</span>
-            <span className="text-[9px] font-mono text-brand-primary block leading-none">SIGNAL MONITOR</span>
-          </div>
+          <span className="font-display font-semibold text-sm tracking-tight text-brand-text">Dhwani</span>
         </div>
 
-        {/* User Workspace Info */}
-        <div className="px-4 py-3.5 border-b border-brand-border bg-brand-bg/40">
-          <span className="block text-[10px] font-mono text-brand-muted uppercase mb-1.5">Connected profile</span>
+        <div className="px-4 py-3.5 border-b border-brand-border">
           <div className="flex items-center gap-3">
             <UserButton />
             <div className="truncate">
-              <span className="block text-xs font-semibold text-brand-text">{user?.firstName || 'Explorer'}</span>
-              <span className="block text-[9px] font-mono text-brand-muted truncate">{user?.primaryEmailAddress?.emailAddress || 'unassigned@domain.com'}</span>
+              <span className="block text-xs font-semibold text-brand-text truncate">
+                {user?.firstName || user?.primaryEmailAddress?.emailAddress || 'Account'}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Sidebar Nav Links */}
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentView === item.id;
+          {navItems.map(item => {
+            const Icon = item.icon
+            const isActive = nav === item.id
             return (
               <button
                 key={item.id}
-                onClick={() => setView(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-xs font-medium rounded-lg text-left transition-all outline-none cursor-pointer ${
-                  isActive 
-                    ? 'bg-brand-primary/10 text-brand-accent font-semibold border-l-2 border-brand-primary pl-4' 
+                onClick={() => setNav(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-xs font-medium rounded-lg text-left transition-colors ${
+                  isActive
+                    ? 'bg-brand-primary/10 text-brand-accent border-l-2 border-brand-primary pl-[10px]'
                     : 'text-brand-muted hover:text-brand-text hover:bg-brand-card/50'
                 }`}
-                id={`sidebar-link-${item.id}`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-brand-accent' : 'text-brand-muted group-hover:text-brand-text'}`} />
-                <span>{item.name}</span>
-                {item.id === 'audits' && (
-                  <span className="ml-auto bg-brand-primary/15 text-brand-accent text-[9px] font-mono px-1.5 py-0.2 rounded border border-brand-primary/20">
-                    {freeAuditsRemaining} FREE
-                  </span>
-                )}
+                <Icon className="w-4 h-4" />
+                <span>{item.label}</span>
               </button>
-            );
+            )
           })}
         </nav>
 
-        {/* Sidebar CTA paywall check */}
-        <div className="p-4 border-t border-brand-border bg-brand-bg/40 space-y-2">
-          <div className="bg-brand-card rounded-lg p-3 border border-brand-primary/10 text-center">
-            <span className="block text-[9px] font-mono text-brand-accent mb-1 uppercase text-glow">Audit Capacity</span>
-            <span className="text-sm font-semibold block text-brand-text mb-1">{freeAuditsRemaining} left</span>
-            <div className="w-full bg-brand-bg h-1 rounded-full overflow-hidden">
-              <div className="bg-brand-primary h-full" style={{ width: freeAuditsRemaining ? '100%' : '0%' }} />
-            </div>
-            {freeAuditsRemaining <= 0 && (
-              <button
-                onClick={() => setUpgradeModalOpen(true)}
-                className="mt-2 text-[10px] text-brand-accent font-semibold flex items-center justify-center gap-1 mx-auto hover:underline cursor-pointer"
-                id="sidebar-paywall-notice-btn"
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Unlock Pro Limits</span>
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border border-brand-border bg-brand-bg/50 px-3 py-2">
-            <span className="text-[10px] font-mono text-brand-muted uppercase">Account</span>
-            <UserButton />
-          </div>
+        <div className="p-4 border-t border-brand-border">
+          <button
+            onClick={() => signOut({ redirectUrl: '/' })}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-brand-muted hover:text-brand-text hover:bg-brand-card rounded-lg transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Sign out
+          </button>
         </div>
       </aside>
 
-      {/* 2. MAIN WORKSPACE */}
-      <div className="flex-1 flex flex-col min-w-0" id="main-workspace-container">
-        {/* TOP BAR */}
-        <header className="h-16 border-b border-brand-border bg-brand-surface flex items-center justify-between px-4 sm:px-6 z-10">
-          <div className="flex items-center gap-4 flex-1">
-            {/* Quick Logo for mobile sizes */}
-            <div className="lg:hidden flex items-center gap-2 cursor-pointer" onClick={() => setView('overview')} id="mobile-top-brand">
-              <div className="w-7 h-7 rounded-md bg-brand-bg border border-brand-primary/25 flex items-center justify-center text-brand-primary">
-                <Signal className="w-3.5 h-3.5" />
-              </div>
-              <span className="font-display font-medium text-sm tracking-tight text-brand-text">Dhwani</span>
+      {/* MAIN */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-16 border-b border-brand-border bg-brand-surface flex items-center justify-between px-4 sm:px-6 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="lg:hidden w-7 h-7 rounded-md bg-brand-bg border border-brand-primary/25 flex items-center justify-center text-brand-primary">
+              <Signal className="w-3.5 h-3.5" />
             </div>
-
-            {/* Simulated global search */}
-            <div className="hidden sm:flex items-center gap-2 bg-brand-bg border border-brand-border px-3 py-1.5 rounded-lg max-w-sm w-full">
-              <Search className="w-3.5 h-3.5 text-brand-muted" />
-              <input
-                type="text"
-                readOnly
-                placeholder="Search audit parameters, competitors..."
-                className="text-[11px] bg-transparent text-brand-muted hover:text-brand-text w-full focus:outline-none font-mono"
-              />
+            <div>
+              <h1 className="text-sm font-display font-semibold text-brand-text">
+                {isDiscovery ? 'Discovery Audit' : 'Brand Health Audit'}
+              </h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase ${
+                  status === 'COMPLETE'
+                    ? 'text-brand-accent bg-brand-accent/10 border-brand-accent/25'
+                    : 'text-yellow-300 bg-yellow-950/20 border-yellow-900/30'
+                }`}>
+                  {status === 'COMPLETE' ? 'Complete' : 'Partial'}
+                </span>
+                {createdAt && (
+                  <span className="flex items-center gap-1 text-[10px] text-brand-muted font-mono">
+                    <Clock className="w-2.5 h-2.5" />
+                    {formatDate(createdAt)}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+          <UserButton />
+        </header>
 
-          <div className="flex items-center gap-4">
-            {/* Notifications Menu Trigger */}
-            <div className="relative">
-              <button 
-                onClick={() => {
-                  setShowNotifications(!showNotifications);
-                  setActiveNotificationCount(0);
-                }}
-                className="p-1.5 bg-brand-bg border border-brand-border hover:bg-brand-card rounded-lg text-brand-muted hover:text-brand-text cursor-pointer relative outline-none"
-                aria-label="Toggle notifications menu"
-                id="topbar-notifications-btn"
-              >
-                <Bell className="w-4 h-4" />
-                {activeNotificationCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-brand-primary rounded-full border border-brand-surface animate-bounce" />
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+          {/* OVERVIEW */}
+          {nav === 'overview' && (
+            <div className="space-y-6 animate-fade-in">
+              {/* Hero stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+                  <span className="text-[10px] font-mono text-brand-muted uppercase">Mention rate</span>
+                  <span className="block text-3xl font-bold text-brand-accent text-glow mt-2">{pct(mentionRate)}</span>
+                  <div className="text-[10px] text-brand-muted mt-3 font-mono">
+                    Across {enginesRun.length} model{enginesRun.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+
+                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+                  <span className="text-[10px] font-mono text-brand-muted uppercase">Prompts run</span>
+                  <span className="block text-3xl font-bold text-brand-text mt-2">{totalPrompts ?? '—'}</span>
+                  <div className="text-[10px] text-brand-muted mt-3 font-mono">
+                    {mentionedCount} mentioned you
+                  </div>
+                </div>
+
+                {discovery ? (
+                  <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+                    <span className="text-[10px] font-mono text-brand-muted uppercase">Avg. mention position</span>
+                    <span className="block text-3xl font-bold text-brand-text mt-2">
+                      {combined && 'avg_position' in combined && combined.avg_position != null
+                        ? `#${Math.round(combined.avg_position)}`
+                        : '—'}
+                    </span>
+                    <div className="text-[10px] text-brand-muted mt-3 font-mono">
+                      Among listed recommendations
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+                    <span className="text-[10px] font-mono text-brand-muted uppercase">Not mentioned</span>
+                    <span className="block text-3xl font-bold text-brand-text mt-2">
+                      {combined && 'not_found_count' in combined ? combined.not_found_count ?? 0 : 0}
+                    </span>
+                    <div className="text-[10px] text-brand-muted mt-3 font-mono">
+                      Out of {totalPrompts ?? 0} prompts
+                    </div>
+                  </div>
                 )}
-              </button>
 
-              {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 bg-brand-surface border border-brand-border rounded-xl shadow-xl p-4 z-50 text-left">
-                  <div className="flex items-center justify-between border-b border-brand-border pb-2 mb-3">
-                    <span className="text-xs font-semibold text-brand-text">System Alerts</span>
-                    <button onClick={() => setShowNotifications(false)} className="text-[10px] text-brand-accent hover:underline">Dismiss</button>
+                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+                  <span className="text-[10px] font-mono text-brand-muted uppercase">
+                    {discovery ? 'Competitors found' : 'Categories tracked'}
+                  </span>
+                  <span className="block text-3xl font-bold text-brand-text mt-2">
+                    {discovery ? (discovery.competitor_landscape?.length ?? 0) : Object.keys(intentBreakdown).length}
+                  </span>
+                  <div className="text-[10px] text-brand-muted mt-3 font-mono">
+                    {discovery ? 'Mentioned alongside you' : 'Intent angles tested'}
                   </div>
-                  <div className="space-y-3 max-h-52 overflow-y-auto">
-                    <div className="p-2 rounded bg-brand-bg border border-brand-border/40 text-[11px] leading-relaxed">
-                      <span className="font-semibold block text-brand-accent">ChatGPT Recommendation Audit completed</span>
-                      <span>Your business reference is active in local indexes.</span>
-                    </div>
-                    <div className="p-2 rounded bg-brand-bg border border-brand-border/40 text-[11px] leading-relaxed">
-                      <span className="font-semibold block text-brand-muted">Citation warning in Reddit /r/seo</span>
-                      <span>Missing query density for keyword clusters.</span>
-                    </div>
-                  </div>
+                </div>
+              </div>
+
+              {/* Per-engine breakdown */}
+              <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
+                <h3 className="text-sm font-medium text-brand-text mb-4">Mention rate by model</h3>
+                <div className="space-y-4">
+                  {enginesRun.length === 0 && (
+                    <p className="text-xs text-brand-muted">No per-model data available.</p>
+                  )}
+                  {enginesRun.map(engine => {
+                    const meta = ENGINE_META[engine] ?? { label: engine, color: '#2AA198' }
+                    const m = perEngine[engine]
+                    const rate = m?.mention_rate_pct ?? 0
+                    const run = 'total_prompts' in (m ?? {}) ? (m as DiscoveryEngineMetric)?.total_prompts : (m as BrandHealthEngineMetric)?.prompts_run
+                    return (
+                      <div key={engine}>
+                        <div className="flex items-center justify-between text-xs font-mono mb-1.5">
+                          <span className="text-brand-text font-medium flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: meta.color }} />
+                            {meta.label}
+                          </span>
+                          <span className="text-brand-muted">
+                            {m?.mentioned_count ?? 0} / {run ?? '—'} · <span className="text-brand-accent font-semibold">{pct(rate)}</span>
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-brand-card rounded-full overflow-hidden border border-white/[0.02]">
+                          <div
+                            className="h-full rounded-full transition-all duration-700"
+                            style={{ width: `${Math.min(rate, 100)}%`, backgroundColor: meta.color }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PROMPT RESULTS */}
+          {nav === 'prompts' && (
+            <div className="space-y-3 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-brand-text">
+                  {groupedPrompts.length} prompt{groupedPrompts.length !== 1 ? 's' : ''} tested
+                </h3>
+              </div>
+
+              {groupedPrompts.length === 0 ? (
+                <p className="text-xs text-brand-muted py-8 text-center">No prompt results yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {groupedPrompts.map(row => {
+                    const isOpen = expandedPrompt === row.promptId
+                    const firstResult = Object.values(row.byEngine)[0] as (DiscoveryPerPrompt | BrandHealthPerPrompt | undefined)
+                    const intentCategory = firstResult && 'intent_category' in firstResult ? firstResult.intent_category : null
+
+                    return (
+                      <div key={row.promptId} className="bg-brand-surface border border-brand-border rounded-xl overflow-hidden">
+                        <button
+                          onClick={() => setExpandedPrompt(isOpen ? null : row.promptId)}
+                          className="w-full flex items-start gap-3 p-4 text-left hover:bg-brand-card/20 transition-colors"
+                        >
+                          {isOpen ? (
+                            <ChevronDown className="w-4 h-4 text-brand-muted mt-0.5 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-brand-muted mt-0.5 shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-brand-text leading-relaxed">{row.prompt_text}</p>
+                            {intentCategory && (
+                              <span className="inline-block mt-1.5 text-[9px] font-mono px-1.5 py-0.5 rounded border border-brand-border text-brand-muted uppercase">
+                                {INTENT_LABELS[intentCategory] ?? intentCategory}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {enginesRun.map(engine => {
+                              const result = row.byEngine[engine]
+                              if (!result) return null
+                              return (
+                                <span
+                                  key={engine}
+                                  title={ENGINE_META[engine]?.label}
+                                  className={`w-6 h-6 rounded-md flex items-center justify-center border ${
+                                    result.mentioned
+                                      ? 'bg-brand-accent/10 border-brand-accent/30 text-brand-accent'
+                                      : 'bg-brand-card border-brand-border text-brand-muted'
+                                  }`}
+                                >
+                                  {result.mentioned ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        </button>
+
+                        {isOpen && (
+                          <div className="px-4 pb-4 space-y-2.5 border-t border-brand-border/60 pt-3">
+                            {enginesRun.map(engine => {
+                              const result = row.byEngine[engine]
+                              if (!result) return null
+                              const meta = ENGINE_META[engine]
+                              const sentiment = 'sentiment' in result ? result.sentiment : null
+                              const position = 'position' in result ? result.position : null
+                              return (
+                                <div key={engine} className="bg-brand-bg rounded-lg border border-brand-border/60 p-3">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-xs font-semibold text-brand-text flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: meta?.color }} />
+                                      {meta?.label ?? engine}
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      {position != null && (
+                                        <span className="text-[10px] font-mono text-brand-muted">#{position}</span>
+                                      )}
+                                      {sentiment && SENTIMENT_META[sentiment] && (
+                                        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${SENTIMENT_META[sentiment].className}`}>
+                                          {SENTIMENT_META[sentiment].label}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {result.raw_text ? (
+                                    <p className="text-[11px] text-brand-muted leading-relaxed whitespace-pre-wrap">
+                                      {result.raw_text}
+                                    </p>
+                                  ) : (
+                                    <p className="text-[11px] text-brand-muted/60 italic">No response text captured.</p>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
+          )}
 
-            {/* Connected User Badge */}
-            <div className="flex items-center gap-2.5 pl-3 border-l border-brand-border">
-              <div className="hidden md:block text-right">
-                <span className="block text-xs font-semibold text-brand-text">{user?.firstName || 'Explorer'}</span>
-                <span className="block text-[9px] font-mono text-brand-accent uppercase tracking-wider">Free Starter</span>
-              </div>
-              <UserButton />
-            </div>
-          </div>
-        </header>
-
-        {/* DYNAMIC SCENE CONTAINER */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6" id="dashboard-content-frame">
-          
-          {/* A. OVERVIEW SUB-SCENE */}
-          {currentView === 'overview' && (
-            <div className="space-y-6 animate-fade-in" id="overview-scene">
-              {/* Header block */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Main Diagnostics</span>
-                  <h2 className="text-xl md:text-2xl font-display font-medium text-white">Dynamic Brand Resonance</h2>
-                </div>
-                {/* On demand checking banner */}
-                <div className="flex items-center gap-3">
-                  <div className="bg-brand-surface px-3 py-1.5 border border-brand-border rounded-lg text-xs font-mono text-brand-muted">
-                    ACTIVE AUDITS: {audits.length}
-                  </div>
-                  <button
-                    onClick={() => setView('audits')}
-                    className="bg-brand-primary hover:bg-brand-accent text-brand-bg text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
-                    id="trigger-new-audit-overview-btn"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Deploy Audit</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* STATS BENTO MATRIX */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Visual Score */}
-                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border flex flex-col justify-between hover:border-brand-primary/20 transition-all">
-                  <div>
-                    <span className="text-[10px] font-mono text-brand-muted uppercase">AI VISIBILITY INDEX</span>
-                    <span className="block text-3xl font-bold text-brand-accent text-glow mt-2">{selectedAudit.visibilityScore}%</span>
-                  </div>
-                  <div className="text-[10px] text-brand-muted mt-3 font-mono">
-                    Avg rating across Chatbots
-                  </div>
-                </div>
-
-                {/* Top Competitor */}
-                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border flex flex-col justify-between hover:border-brand-primary/20 transition-all">
-                  <div>
-                    <span className="text-[10px] font-mono text-brand-muted uppercase">TOP COMPETITOR</span>
-                    <span className="block text-base font-semibold text-white mt-2 truncate">{selectedAudit.topCompetitor}</span>
-                  </div>
-                  <div className="text-[10px] text-brand-accent mt-3 font-mono">
-                    Appears {selectedAudit.competitorAdvantageFactor}x more often
-                  </div>
-                </div>
-
-                {/* Citation Gap count */}
-                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border flex flex-col justify-between hover:border-brand-primary/20 transition-all">
-                  <div>
-                    <span className="text-[10px] font-mono text-brand-muted uppercase">CITATION GAPS</span>
-                    <span className="block text-3xl font-semibold text-white mt-2">{selectedAudit.citationGapsCount}</span>
-                  </div>
-                  <div className="text-[10px] text-red-400 mt-3 font-mono">
-                    Ref layers missing references
-                  </div>
-                </div>
-
-                {/* Recent query parameters */}
-                <div className="bg-brand-surface rounded-xl p-5 border border-brand-border flex flex-col justify-between hover:border-brand-primary/20 transition-all">
-                  <div>
-                    <span className="text-[10px] font-mono text-brand-muted uppercase">TARGET LOCATION</span>
-                    <span className="block text-base font-semibold text-white mt-2 truncate">{selectedAudit.city || 'Chicago'}</span>
-                  </div>
-                  <div className="text-[10px] text-brand-muted mt-3 font-mono truncate">
-                    Category: {selectedAudit.category}
-                  </div>
-                </div>
-              </div>
-
-              {/* CHART ANALYSIS */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                <div className="lg:col-span-8">
-                  <ResonanceWaveChart score={selectedAudit.visibilityScore} />
-                </div>
-                <div className="lg:col-span-4 bg-brand-surface rounded-xl border border-brand-border p-4 flex flex-col justify-between">
-                  <div>
-                    <span className="text-[10px] font-mono text-brand-accent uppercase block">Resonance Rating</span>
-                    <h4 className="text-sm font-medium text-white mt-1 mb-3">Model Recommendations</h4>
-                    <PlatformBars breakdown={selectedAudit.platformBreakdown} />
-                  </div>
-                  <button
-                    onClick={() => setView('audits')}
-                    className="w-full mt-4 flex items-center justify-center gap-1 bg-brand-card hover:bg-brand-bg text-brand-accent border border-brand-border py-1.5 rounded text-[11px] transition-all cursor-pointer font-mono"
-                    id="view-detailed-breakdowns-overview-btn"
-                  >
-                    <span>Inspect crawl sources</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* AUDITS HISTORY LISTS */}
+          {/* COMPETITORS (discovery) / CATEGORIES (brand health) */}
+          {nav === 'landscape' && discovery && (
+            <div className="space-y-6 animate-fade-in">
               <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                <div className="flex items-center justify-between pb-3 border-b border-brand-border/40 mb-3">
-                  <h3 className="text-sm font-medium text-white">Active Audit History ({audits.length})</h3>
-                  <span className="text-[10px] font-mono text-brand-muted">SEEDED DIRECTIVES</span>
-                </div>
-
-                {audits.length === 0 ? (
-                  <p className="text-xs text-brand-muted text-center py-6">No audits computed yet. Deploy one above!</p>
+                <h3 className="text-sm font-medium text-brand-text mb-4">Competitor landscape</h3>
+                {(!discovery.competitor_landscape || discovery.competitor_landscape.length === 0) ? (
+                  <p className="text-xs text-brand-muted py-4">No competitors were named in the responses.</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
-                        <tr className="border-b border-brand-border/40 font-mono text-brand-muted text-[9px] uppercase">
-                          <th className="py-2.5">Business / Agency</th>
-                          <th className="py-2.5">Sector</th>
-                          <th className="py-2.5">Target City</th>
-                          <th className="py-2.5">Visibility Index</th>
-                          <th className="py-2.5">Top Opponent</th>
-                          <th className="py-2.5 text-right">Action</th>
+                        <tr className="border-b border-brand-border/40 text-brand-muted text-[9px] font-mono uppercase">
+                          <th className="py-2.5">Name</th>
+                          <th className="py-2.5">Appearances</th>
+                          <th className="py-2.5">Avg. rank</th>
+                          <th className="py-2.5">Seen in</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-brand-border/20 text-brand-text/90">
-                        {audits.map((item) => (
-                          <tr key={item.id} className="hover:bg-brand-card/20 transition-all">
-                            <td className="py-3 font-medium text-white">{item.businessName}</td>
-                            <td className="py-3 font-mono text-[10px]">{item.category}</td>
-                            <td className="py-3 font-mono text-[10px] text-brand-muted">{item.city}</td>
-                            <td className="py-3">
-                              <span className="font-semibold text-brand-accent">{item.visibilityScore}%</span>
-                            </td>
-                            <td className="py-3 text-brand-muted truncate max-w-[120px]">{item.topCompetitor}</td>
-                            <td className="py-3 text-right">
-                              <button
-                                onClick={() => {
-                                  setActiveAuditId(item.id);
-                                  setView('audits');
-                                }}
-                                className="text-brand-accent hover:underline text-[10px] font-mono cursor-pointer"
-                                id={`select-audit-history-row-${item.id}`}
-                              >
-                                View Detailed Report →
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                      <tbody className="divide-y divide-brand-border/20">
+                        {[...discovery.competitor_landscape]
+                          .sort((a, b) => b.appearances - a.appearances)
+                          .map((c, i) => (
+                            <tr key={i}>
+                              <td className="py-2.5 font-medium text-brand-text">{c.name}</td>
+                              <td className="py-2.5 text-brand-accent font-semibold">{c.appearances}</td>
+                              <td className="py-2.5 text-brand-muted">#{Math.round(c.avg_mention_rank)}</td>
+                              <td className="py-2.5">
+                                <div className="flex gap-1">
+                                  {c.engines_seen_in?.map(e => (
+                                    <span key={e} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: ENGINE_META[e]?.color ?? '#2AA198' }} title={ENGINE_META[e]?.label} />
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                       </tbody>
                     </table>
                   </div>
                 )}
               </div>
+
+              <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
+                <h3 className="text-sm font-medium text-brand-text mb-4 flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-brand-muted" />
+                  Citation sources
+                </h3>
+                {(!discovery.citation_source_map || discovery.citation_source_map.length === 0) ? (
+                  <p className="text-xs text-brand-muted py-4">No citation sources were detected.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {[...discovery.citation_source_map]
+                      .sort((a, b) => b.citation_share_pct - a.citation_share_pct)
+                      .map((c, i) => (
+                        <div key={i} className="flex items-center justify-between p-2.5 bg-brand-bg rounded-lg border border-brand-border/60">
+                          <span className="text-xs font-medium text-brand-text truncate">{c.domain}</span>
+                          <div className="flex items-center gap-3 text-[10px] font-mono text-brand-muted shrink-0">
+                            <span>{c.citation_count} citations</span>
+                            <span className="text-brand-accent font-semibold">{pct(c.citation_share_pct)}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {/* B. AUDIT RESULTS SUB-SCENE (MAIN ENGINE VIEW) */}
-          {currentView === 'audits' && (
-            <div className="space-y-6 animate-fade-in" id="audits-scene">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-brand-border/40">
-                <div>
-                  <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Active Audit Scan</span>
-                  <h2 className="text-xl md:text-2xl font-display font-medium text-white">
-                    {selectedAudit?.businessName || 'Entity Diagnostics'}
-                  </h2>
-                </div>
-                {/* Audit selection dropdown */}
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-brand-muted">Selected Result:</span>
-                  <select
-                    value={selectedAudit?.id || ''}
-                    onChange={(e) => setActiveAuditId(e.target.value)}
-                    className="bg-brand-surface text-brand-text border border-brand-border text-xs px-2.5 py-1.5 rounded-lg max-w-[180px] focus:outline-none focus:border-brand-primary"
-                    id="active-audit-selector-dropdown"
-                  >
-                    {audits.map(a => (
-                      <option key={a.id} value={a.id}>{a.businessName} ({a.city})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* LOCAL AUDIT GENERATION PANEL */}
-              <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                <span className="block text-[10px] font-mono text-brand-accent uppercase mb-2">Run another recommendation scanner</span>
-                <form onSubmit={handleLaunchDashboardAudit} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                  <div className="sm:col-span-3">
-                    <label className="block text-[9px] font-mono text-brand-muted uppercase mb-1">Company name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Acme Legal"
-                      value={bizName}
-                      onChange={(e) => setBizName(e.target.value)}
-                      className="w-full bg-brand-bg px-2.5 py-1.5 text-xs text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="block text-[9px] font-mono text-brand-muted uppercase mb-1">Operating Category</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Attorney"
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      className="w-full bg-brand-bg px-2.5 py-1.5 text-xs text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="block text-[9px] font-mono text-brand-muted uppercase mb-1">Target Location City</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Seattle"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className="w-full bg-brand-bg px-2.5 py-1.5 text-xs text-brand-text border border-brand-border rounded-lg focus:outline-none focus:border-brand-primary"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <button
-                      type="submit"
-                      disabled={isAuditing}
-                      className="w-full py-1.5 bg-brand-primary hover:bg-brand-accent disabled:opacity-50 text-brand-bg text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
-                      id="launch-sub-audit-form-btn"
-                    >
-                      {isAuditing ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Auditing bots...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cpu className="w-3.5 h-3.5" />
-                          <span>Scan recommendation</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-
-                {errorMsg && (
-                  <div className="mt-3 flex items-center gap-2 text-xs bg-red-950/20 text-red-300 p-2.5 rounded border border-red-900/40">
-                    <AlertCircle className="w-4 h-4 text-red-400" />
-                    <span>{errorMsg}</span>
-                  </div>
-                )}
-                {successMsg && (
-                  <div className="mt-3 flex items-center gap-2 text-xs bg-brand-primary/10 text-brand-accent p-2.5 rounded border border-brand-primary/20">
-                    <CheckCircle className="w-4 h-4 text-brand-accent" />
-                    <span>{successMsg}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* DETAILED DIAGNOSTICS FOR THE CURRENT ACTIVE AUDIT */}
-              {selectedAudit ? (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Score, Recommendation Breakdown Card */}
-                  <div className="lg:col-span-5 bg-brand-surface rounded-xl border border-brand-border p-5 space-y-6">
-                    <div className="text-center space-y-2">
-                      <span className="block text-[10px] font-mono text-brand-muted uppercase">Consolidated AI Visibility Rating</span>
-                      
-                      <div className="relative w-36 h-36 mx-auto flex items-center justify-center mt-3">
-                        {/* Circular progress track SVG */}
-                        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                          <circle cx="50" cy="50" r="40" fill="transparent" stroke="rgba(255,255,255,0.02)" strokeWidth="6" />
-                          <circle cx="50" cy="50" r="40" fill="transparent" stroke="#2AA198" strokeWidth="6" 
-                            strokeDasharray={`${2 * Math.PI * 40}`}
-                            strokeDashoffset={`${2 * Math.PI * 40 * (1 - selectedAudit.visibilityScore / 100)}`}
-                            strokeLinecap="round"
-                            className="transition-all duration-1000"
-                            style={{ filter: 'drop-shadow(0px 0px 4px rgba(42,161,152,0.6))' }}
-                          />
-                        </svg>
-                        <div className="absolute text-center">
-                          <span className="block text-3xl font-extrabold font-display text-white">{selectedAudit.visibilityScore}%</span>
-                          <span className="text-[8px] font-mono text-brand-muted block uppercase mt-0.5">RES LEVEL</span>
-                        </div>
-                      </div>
-                      
-                      <p className="text-xs text-brand-muted leading-relaxed font-light mt-2 max-w-xs mx-auto">
-                        Your brand appeared in exactly {selectedAudit.visibilityScore} out of 100 tested client recommendation intents.
-                      </p>
-                    </div>
-
-                    <div className="border-t border-brand-border/40 pt-4">
-                      <span className="block text-[10px] font-mono text-brand-muted uppercase mb-3">Model Recommendations Breakdown</span>
-                      <PlatformBars breakdown={selectedAudit.platformBreakdown} />
-                    </div>
-                  </div>
-
-                  {/* Rest details in remaining area */}
-                  <div className="lg:col-span-7 space-y-6">
-                    {/* Missing queries & gap analysis */}
-                    <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                      <h3 className="text-sm font-semibold text-white mb-2">Tested Missing Query Sequences</h3>
-                      <p className="text-xs text-brand-muted mb-4">
-                        We ran hundreds of recommendation prompts. These critical search patterns recommended your competitor (<span className="text-brand-accent">{selectedAudit.topCompetitor}</span>) instead of you:
-                      </p>
-                      
-                      <div className="space-y-2.5">
-                        {selectedAudit.missingQueriesList.map((q, i) => (
-                          <div key={i} className="flex items-start gap-2.5 p-2 bg-brand-bg rounded border border-brand-border/50 text-xs font-mono text-brand-text">
-                            <span className="text-[10px] text-brand-accent mt-0.5">0{i+1}</span>
-                            <span className="break-all">{q}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Citation source gaps list */}
-                    <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                      <h3 className="text-sm font-semibold text-white mb-2">Crawl Reference Gaps Detected</h3>
-                      <p className="text-xs text-brand-muted mb-4">
-                        Top models ingest context from these platforms. Your coverage index fails minimum thresholds, resulting in exclusion.
-                      </p>
-
-                      <div className="space-y-2.5 text-xs">
-                        {selectedAudit.citationGapsList.map((c, i) => (
-                          <div key={i} className="flex items-center justify-between p-2.5 bg-brand-bg rounded border border-brand-border/50">
-                            <div>
-                              <span className="block font-medium text-white">{c.source}</span>
-                              <span className="text-[9px] font-mono text-brand-muted">{c.type}</span>
-                            </div>
-                            <span className={`px-2 py-0.5 rounded font-mono text-[9px] border ${
-                              c.coverage === 'None' || c.coverage === 'No Mention'
-                                ? 'bg-red-950/20 text-red-300 border-red-900/40 animate-pulse'
-                                : 'bg-yellow-950/20 text-yellow-300 border-yellow-900/40'
-                            }`}>
-                              {c.coverage}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Actionable Content Suggestions and recommendation cards */}
-                    <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                      <h4 className="text-sm font-semibold text-white mb-3">Actionable Content Suggestions</h4>
-                      <div className="space-y-3 text-xs">
-                        {selectedAudit.contentSuggestions.map((s, i) => (
-                          <div key={i} className="p-3 bg-brand-bg rounded-lg border border-brand-border/40 hover:border-brand-primary/20 transition-all">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="font-semibold text-white leading-relaxed">{s.title}</span>
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-mono uppercase border ${
-                                s.priority === 'High' 
-                                  ? 'bg-brand-accent/15 text-brand-accent border-brand-accent/20' 
-                                  : 'bg-brand-muted/20 text-brand-muted border-white/5'
-                              }`}>
-                                {s.priority} PRIORITY
-                              </span>
-                            </div>
-                            <span className="block text-[10px] font-mono text-brand-muted">Target integration: {s.platformHint}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Core System Recommendations */}
-                    <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                      <h4 className="text-sm font-semibold text-white mb-3">Dhwani Strategy Manual</h4>
-                      <ol className="space-y-3 text-xs text-brand-muted list-decimal pl-4 leading-relaxed font-light">
-                        {selectedAudit.recommendations.map((rec, i) => (
-                          <li key={i} className="pl-1">
-                            <span className="text-brand-text font-medium">{rec}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-
-                    {/* SHAREABLE REPORT CARDS */}
-                    <div className="bg-gradient-to-r from-brand-card to-brand-surface rounded-xl border border-brand-primary/20 p-5 overflow-hidden relative">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-brand-primary/10 rounded-full blur-2xl pointer-events-none" />
-                      
-                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-brand-border">
-                        <div>
-                          <span className="text-[10px] font-mono text-brand-accent uppercase block tracking-wider">Public Credentials</span>
-                          <h4 className="text-sm font-semibold text-white">Trust Embed Certificate</h4>
-                        </div>
-                        <Share2 className="w-4 h-4 text-brand-accent" />
-                      </div>
-
-                      <div className="bg-brand-bg p-3.5 rounded border border-brand-border font-mono text-[10px] text-brand-muted leading-relaxed">
-                        <span className="block text-brand-text font-semibold mb-1">// DHWANI VERIFIED EMBEDDABLE BADGE</span>
-                        <span>{`<iframe src="https://dhwani.ai/embed/${selectedAudit.id}" width="280" height="150" frameborder="0"></iframe>`}</span>
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between gap-4">
-                        <p className="text-[10px] text-brand-muted leading-relaxed">
-                          Embed this live-sync seal on your landing grids to showcase verified AI visibility status to enterprise clients.
-                        </p>
-                        <button
-                          onClick={copyReportCardLink}
-                          className="bg-brand-primary hover:bg-brand-accent text-brand-bg text-[11px] font-semibold px-3 py-1.5 rounded transition-all cursor-pointer whitespace-nowrap"
-                          id="copy-embed-code-btn"
-                        >
-                          {isCopied ? 'Copied seal status!' : 'Copy Embed Snippet'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+          {nav === 'landscape' && brandHealth && (
+            <div className="space-y-4 animate-fade-in">
+              <h3 className="text-sm font-medium text-brand-text">Mention rate by intent category</h3>
+              {Object.keys(intentBreakdown).length === 0 ? (
+                <p className="text-xs text-brand-muted py-4">No categorized prompts available.</p>
               ) : (
-                <p className="text-xs text-brand-muted py-6">No audits populated. Enter search conditions in the scanner above.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {Object.entries(intentBreakdown).map(([key, m]) => (
+                    <div key={key} className="bg-brand-surface rounded-xl border border-brand-border p-4">
+                      <span className="text-[10px] font-mono text-brand-muted uppercase">
+                        {INTENT_LABELS[key] ?? key}
+                      </span>
+                      <span className="block text-2xl font-bold text-brand-accent mt-1.5">
+                        {pct(m.mention_rate_pct)}
+                      </span>
+                      <div className="text-[10px] text-brand-muted mt-2 font-mono">
+                        {m.mentioned_count ?? 0} of {m.prompts_run ?? 0} prompts
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
-            </div>
-          )}
-
-          {/* C. COMPETITORS SUB-SCENE */}
-          {currentView === 'competitors' && (
-            <div className="space-y-6 animate-fade-in" id="competitors-scene">
-              <div className="pb-3 border-b border-brand-border/40">
-                <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Global Diagnostics</span>
-                <h2 className="text-xl md:text-2xl font-display font-medium text-white">Competitor Authority Tracking</h2>
-              </div>
-
-              {/* Competitive Overview Alert */}
-              <div className="p-4 bg-brand-primary/5 border border-brand-primary/15 rounded-xl flex items-start gap-3.5">
-                <AlertCircle className="w-5 h-5 text-brand-accent shrink-0 mt-0.5" />
-                <div className="text-xs leading-relaxed text-brand-muted">
-                  <span className="font-semibold text-white block mb-0.5">Competitor Advantage Alert</span>
-                  <span>Your competitor <strong>{selectedAudit.topCompetitor}</strong> maintains an average visibility footprint of {selectedAudit.competitorVisibilityScore}% within your target sector. That represents a {selectedAudit.competitorAdvantageFactor}x higher response density on local searches matching <strong>{selectedAudit.category} in {selectedAudit.city}</strong>.</span>
-                </div>
-              </div>
-
-              {/* Competitors List Table */}
-              <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
-                <div className="flex items-center justify-between pb-3 border-b border-brand-border/40 mb-4">
-                  <h3 className="text-sm font-medium text-white">Scanned Authority Competitors</h3>
-                  <span className="text-[10px] font-mono text-brand-accent">COUNT: 3 IDENTIFIED</span>
-                </div>
-
-                <div className="space-y-4">
-                  {/* Row 1 */}
-                  <div className="p-4 bg-brand-bg rounded-lg border border-brand-border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                      <span className="text-sm font-semibold text-white">{selectedAudit.topCompetitor}</span>
-                      <span className="block text-[10px] text-brand-muted font-mono">Category Leader • Local cluster dominant</span>
-                    </div>
-                    <div className="flex items-center gap-6 text-xs">
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Chatbot Coverage</span>
-                        <span className="font-semibold text-brand-accent">{selectedAudit.competitorVisibilityScore}%</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Citation Weight</span>
-                        <span className="font-semibold text-white">High (92 points)</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Direct Loss Index</span>
-                        <span className="font-semibold text-red-200">18x loss factor</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Row 2 */}
-                  <div className="p-4 bg-brand-bg rounded-lg border border-brand-border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                      <span className="text-sm font-semibold text-white">Zeta Solutions</span>
-                      <span className="block text-[10px] text-brand-muted font-mono">Secondary Opponent • Up-and-coming citation seeker</span>
-                    </div>
-                    <div className="flex items-center gap-6 text-xs">
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Chatbot Coverage</span>
-                        <span className="font-semibold text-[#8EE6DD]">64%</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Citation Weight</span>
-                        <span className="font-semibold text-white">Medium (58 points)</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Direct Loss Index</span>
-                        <span className="font-semibold text-red-200">2x loss factor</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Row 3 */}
-                  <div className="p-4 bg-brand-bg rounded-lg border border-brand-border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                      <span className="text-sm font-semibold text-white">Omni-Local Sync</span>
-                      <span className="block text-[10px] text-brand-muted font-mono">Direct Competitor • Wikipedia entity sync</span>
-                    </div>
-                    <div className="flex items-center gap-6 text-xs">
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Chatbot Coverage</span>
-                        <span className="font-semibold text-[#8EE6DD]">48%</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Citation Weight</span>
-                        <span className="font-semibold text-white">Medium (45 points)</span>
-                      </div>
-                      <div>
-                        <span className="block text-[9px] font-mono text-brand-muted uppercase">Direct Loss Index</span>
-                        <span className="font-semibold text-red-200">1.2x loss factor</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* D. REPORTS EXPORT SUB-SCENE */}
-          {currentView === 'reports' && (
-            <div className="space-y-6 animate-fade-in" id="reports-scene">
-              <div className="pb-3 border-b border-brand-border/40">
-                <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Document Center</span>
-                <h2 className="text-xl md:text-2xl font-display font-medium text-white">Downloadable Audits & Integrations</h2>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* PDF Generation widget */}
-                <div className="bg-brand-surface rounded-xl border border-brand-border p-5 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <span className="text-[10px] font-mono text-brand-accent uppercase block">Client Pitch Deck</span>
-                    <h3 className="text-base font-medium text-white">PDF Executive Recommendation Report</h3>
-                    <p className="text-xs text-brand-muted leading-relaxed">
-                      Download a fully white-labeled executive summary document detailing current citation blindspots and actionable priority milestones. Perfect for pitching growth packages to non-technical prospects.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      alert('PDF report compiled securely in buffer. Downloading file...');
-                    }}
-                    className="mt-6 w-full py-2 bg-brand-primary hover:bg-brand-accent text-brand-bg rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
-                    id="export-pdf-report-btn"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download Verification PDF</span>
-                  </button>
-                </div>
-
-                {/* CSV raw spreadsheet widget */}
-                <div className="bg-brand-surface rounded-xl border border-brand-border p-5 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <span className="text-[10px] font-mono text-brand-muted uppercase block">Data Analyst Sync</span>
-                    <h3 className="text-base font-medium text-white">Raw Citation CSV Spreadsheet</h3>
-                    <p className="text-xs text-brand-muted leading-relaxed">
-                      Export raw unstructured query parameters, index matching percentages, and crawl sources for ChatGPT, Claude, Gemini, and Perplexity into a comma-separated values file for deep integration.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      alert('CSV file matching 22 gaps exported successfully.');
-                    }}
-                    className="mt-6 w-full py-2 bg-brand-card hover:bg-brand-bg text-brand-accent border border-brand-border rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
-                    id="export-csv-spreadsheet-btn"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download Raw CSV Sheet</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* E. BILLING SUB-SCENE */}
-          {currentView === 'billing' && (
-            <div className="space-y-6 animate-fade-in" id="billing-scene">
-              <div className="pb-3 border-b border-brand-border/40">
-                <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Plan & Billing</span>
-                <h2 className="text-xl md:text-2xl font-display font-medium text-white">Dhwani Subscription Tiers</h2>
-              </div>
-
-              {/* Active Plan Card */}
-              <div className="bg-brand-surface border border-brand-primary/25 rounded-xl p-5 flex justify-between items-center bg-gradient-to-r from-brand-surface to-brand-card">
-                <div>
-                  <span className="text-[9px] font-mono text-brand-accent uppercase tracking-widest block">Active workspace plan</span>
-                  <h3 className="text-base font-semibold text-white mt-1">Free Starter tier</h3>
-                  <p className="text-xs text-brand-muted leading-relaxed mt-1">Exactly 1 free audit limit. Continuous crawler scans are currently suspended.</p>
-                </div>
-                <div className="bg-brand-primary/10 border border-brand-primary/20 px-3 py-1.5 rounded-lg text-xs font-mono text-brand-accent">
-                  {freeAuditsRemaining} audits left
-                </div>
-              </div>
-
-              {/* Premium Plan Choices */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Pro */}
-                <div className="bg-brand-surface rounded-xl p-6 border border-brand-border hover:border-brand-primary/25 transition-all flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-brand-accent uppercase">Professional Growth</span>
-                      <span className="bg-brand-primary/10 text-brand-accent text-[9px] font-mono px-2 py-0.5 rounded border border-brand-primary/20">Recommended</span>
-                    </div>
-                    <div className="text-2xl font-bold text-white font-display">$49<span className="text-xs text-brand-muted font-normal"> / month</span></div>
-                    <p className="text-xs text-brand-muted leading-relaxed">
-                      Continuous, unlimited recommendation audits + automatic competitor authority scraper triggers twice a week.
-                    </p>
-                    <ul className="space-y-2 text-xs text-brand-text/90 pt-3 border-t border-brand-border/40">
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>Unlimited queries scans</span></li>
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>5 Active competitors historical trackers</span></li>
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>PDF & CSV export files enabled</span></li>
-                    </ul>
-                  </div>
-                  <button
-                    onClick={() => {
-                      alert('Upgraded to Professional Growth Plan! Limits cleared.');
-                    }}
-                    className="mt-8 w-full py-2 bg-brand-primary hover:bg-brand-accent text-brand-bg rounded-lg text-xs font-bold transition-all cursor-pointer uppercase tracking-wider"
-                    id="upgrade-to-pro-billing-btn"
-                  >
-                    Activate Pro limits
-                  </button>
-                </div>
-
-                {/* Agency */}
-                <div className="bg-brand-surface rounded-xl p-6 border border-brand-border hover:border-brand-primary/25 transition-all flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-white uppercase">Agency Scale Plan</span>
-                    </div>
-                    <div className="text-2xl font-bold text-white font-display">$149<span className="text-xs text-brand-muted font-normal"> / month</span></div>
-                    <p className="text-xs text-brand-muted leading-relaxed">
-                      Manage up to 25 distinct brand profiles matching elite white-label presentation layouts for enterprise clients.
-                    </p>
-                    <ul className="space-y-2 text-xs text-brand-text/90 pt-3 border-t border-brand-border/40">
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>25 distinct brand workspace layouts</span></li>
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>Customizable whitelabel documents</span></li>
-                      <li className="flex items-center gap-2"><CheckCircle className="w-3.5 h-3.5 text-brand-accent" /> <span>24/7 dedicated API scrape channels</span></li>
-                    </ul>
-                  </div>
-                  <button
-                    onClick={() => {
-                      alert('Upgraded to Agency Scale Plan! All professional features unlocked.');
-                    }}
-                    className="mt-8 w-full py-2 bg-brand-card hover:bg-brand-bg text-brand-accent border border-brand-border rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                    id="upgrade-to-agency-billing-btn"
-                  >
-                    Deploy Agency tier
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* F. SETTINGS SUB-SCENE */}
-          {currentView === 'settings' && (
-            <div className="space-y-6 animate-fade-in" id="settings-scene">
-              <div className="pb-3 border-b border-brand-border/40">
-                <span className="text-[10px] font-mono text-brand-accent uppercase tracking-widest">Workspace Settings</span>
-                <h2 className="text-xl md:text-2xl font-display font-medium text-white">Configure Auditing Priority</h2>
-              </div>
-
-              <div className="bg-brand-surface rounded-xl border border-brand-border p-5 space-y-4">
-                <h3 className="text-sm font-medium text-white">Language Recommender Priority</h3>
-                <p className="text-xs text-brand-muted">
-                  Choose which model networks Dhwani crawler bots prioritize during recursive buyer-scenario simulations.
-                </p>
-
-                <div className="space-y-3 pt-3">
-                  <div className="flex items-center justify-between p-3 bg-brand-bg/85 border border-brand-border rounded-lg">
-                    <div>
-                      <span className="text-xs font-semibold text-white block">ChatGPT-4o / GPT-4 (OpenAI)</span>
-                      <span className="text-[10px] text-brand-muted">Direct intent responses crawl tracking</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" defaultChecked className="sr-only peer" />
-                      <div className="w-9 h-5 bg-brand-card peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-brand-muted peer-checked:after:bg-brand-accent after:border-brand-muted after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-primary/40" />
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-brand-bg/85 border border-brand-border rounded-lg">
-                    <div>
-                      <span className="text-xs font-semibold text-white block">Claude 3.5 Sonnet / Haiku (Anthropic)</span>
-                      <span className="text-[10px] text-brand-muted">Technical and code references crawl tracking</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" defaultChecked className="sr-only peer" />
-                      <div className="w-9 h-5 bg-brand-card peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-brand-muted peer-checked:after:bg-brand-accent after:border-brand-muted after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-primary/40" />
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-brand-bg/85 border border-brand-border rounded-lg">
-                    <div>
-                      <span className="text-xs font-semibold text-white block">Gemini 1.5 Pro / Flash (Google)</span>
-                      <span className="text-[10px] text-brand-muted">Maps and directory API references tracking</span>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" defaultChecked className="sr-only peer" />
-                      <div className="w-9 h-5 bg-brand-card peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-brand-muted peer-checked:after:bg-brand-accent after:border-brand-muted after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-primary/40" />
-                    </label>
-                  </div>
-                </div>
-
-                <div className="pt-4">
-                  <button
-                    onClick={() => {
-                      alert('Audit configuration parameters updated successfully.');
-                    }}
-                    className="bg-brand-primary hover:bg-brand-accent text-brand-bg text-xs font-semibold px-4 py-2 rounded-lg transition-all cursor-pointer"
-                    id="save-settings-btn"
-                  >
-                    Save crawler weights
-                  </button>
-                </div>
-              </div>
             </div>
           )}
         </main>
       </div>
     </div>
-  );
+  )
 }
