@@ -184,7 +184,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ── resolve which screen a returning user should see ─────────────────────
   const resolveScreenFromStatus = useCallback(
     async (status: OnboardingStatus, token: string) => {
-      const { next_step, product_id } = status
+      const { next_step, product_id, product_name, company_id, company_name, role: userRole } = status
+
+      // Account-level info is known as soon as we have a status response at
+      // all, regardless of which onboarding step they're on — keep it in
+      // sync every time so the sidebar always reflects the real account.
+      setRole(userRole ?? null)
+      setCompanyId(company_id ?? null)
+      setCompanyName(company_name ?? null)
+      setProductName(product_name ?? null)
 
       if (next_step !== 'done') {
         setScreen(`onboarding-${next_step}` as AppScreen)
@@ -316,6 +324,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!isSignedIn || !userId) {
       setScreen('landing')
       setProductId(null)
+      setProductName(null)
+      setCompanyId(null)
+      setCompanyName(null)
+      setRole(null)
       setAuditType(null)
       setPrompts([])
       setProgress(null)
@@ -335,6 +347,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         productId,
         productName,
         setProductId,
+        companyId,
+        companyName,
+        role,
         auditType,
         setAuditType,
         prompts,
@@ -346,9 +361,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setSummary,
         currentView,
         setView,
-        companyId,
-        companyName,
-        role,
         isAuthModalOpen,
         setAuthModalOpen,
         authModalView,

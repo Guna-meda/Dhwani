@@ -59,7 +59,11 @@ export type OnboardingStatus = {
   company_step_done: boolean
   product_step_done: boolean
   next_step: 'user' | 'company' | 'product' | 'done'
+  role: 'individual' | 'agency' | null
+  company_id: string | null
+  company_name: string | null
   product_id: string | null
+  product_name: string | null
 }
 
 export function getOnboardingStatus(token: string) {
