@@ -9,8 +9,6 @@ import {
   Sparkles,
   Quote,
   Users,
-  ChevronDown,
-  ChevronRight,
   ChevronsUpDown,
   Plus,
   LogOut,
@@ -18,6 +16,8 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import type { NavId } from './types'
+import type { Product } from '@/lib/api/client'
+import ProductSwitcher from './ProductSwitcher'
 
 export const NAV_ITEMS: { id: NavId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -34,7 +34,11 @@ interface SidebarProps {
   onCloseMobile: () => void
   workspaceLabel: string
   isAgency: boolean
+  companyId: string
+  productId: string
   productName: string
+  getToken: () => Promise<string>
+  onProductChange: (product: Product) => void
   userLabel: string
   onSignOut: () => void
 }
@@ -46,12 +50,15 @@ export default function Sidebar({
   onCloseMobile,
   workspaceLabel,
   isAgency,
+  companyId,
+  productId,
   productName,
+  getToken,
+  onProductChange,
   userLabel,
   onSignOut,
 }: SidebarProps) {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
-  const [productMenuOpen, setProductMenuOpen] = useState(false)
 
   return (
     <>
@@ -128,41 +135,14 @@ export default function Sidebar({
             Brand Report
           </span>
 
-          {/* Product switcher */}
-          <div className="relative mb-1 px-1">
-            <button
-              onClick={() => setProductMenuOpen(o => !o)}
-              className="w-full flex items-center gap-2 px-2.5 py-2.5 rounded-lg hover:bg-brand-card/60 text-left"
-            >
-              <div className="w-6 h-6 rounded bg-brand-card border border-brand-border flex items-center justify-center text-[10px] font-bold text-brand-muted shrink-0">
-                {(productName || 'P').charAt(0).toUpperCase()}
-              </div>
-              <span className="flex-1 text-sm font-semibold text-brand-text truncate">
-                {productName || 'Your product'}
-              </span>
-              {productMenuOpen ? (
-                <ChevronDown className="w-4 h-4 text-brand-muted shrink-0" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-brand-muted shrink-0" />
-              )}
-            </button>
-
-            {productMenuOpen && (
-              <div className="mt-1.5 bg-brand-bg/60 border border-brand-border rounded-lg mb-2 overflow-hidden">
-                <button
-                  disabled
-                  title="Multiple products are coming soon"
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-brand-muted/50 cursor-not-allowed"
-                >
-                  <Plus className="w-4 h-4" />
-                  New product
-                  <span className="ml-auto text-[10px] font-mono uppercase border border-brand-border rounded px-1 py-0.5">
-                    Soon
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* Product switcher — lists/creates products for the active company */}
+          <ProductSwitcher
+            companyId={companyId}
+            activeProductId={productId}
+            activeProductName={productName}
+            getToken={getToken}
+            onProductChange={onProductChange}
+          />
 
           {/* Report nav */}
           <nav className="space-y-0.5 mb-6">

@@ -30,7 +30,7 @@ async function request<T>(
 
   // Backend wraps every successful response in an ApiResponse envelope:
   // { statusCode, data, message, success }. Every controller does this
-  // (see ApiResponse usage across onboarding/discovery/brandhealth routes).
+  // (see ApiResponse usage across onboarding/discovery/brandhealth/products routes).
   // Without unwrapping here, callers were reading fields (like next_step,
   // or _id on a freshly created product) off the *envelope* instead of the
   // real payload — which is why they came back undefined even though the
@@ -110,6 +110,56 @@ export function submitProductOnboarding(
     token,
     body: JSON.stringify(body),
   })
+}
+
+// ─── Products ───────────────────────────────────────────────────────────────
+// Dashboard-side product management — listing/creating/reading products for
+// an already-onboarded company. Mirrors controllers/product.controller.js.
+
+export type ProductAuditStatus = 'SCRAPING' | 'IDLE' | 'FAILED'
+
+export type Product = {
+  _id: string
+  companyId: string
+  client_name: string
+  product_name: string
+  product_description: string | null
+  domain: string
+  country: string
+  audit_status: ProductAuditStatus
+  context?: Record<string, unknown> | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type CreateProductBody = {
+  companyId: string
+  product_name: string
+  product_description?: string
+  domain: string
+  country: string
+}
+
+// POST /products — dashboard "add another product". Runs context extraction
+// synchronously server-side (product comes back either IDLE with `context`
+// populated, or the request itself fails with a 500 if extraction failed —
+// there's no polling needed here, unlike discovery/brandhealth progress).
+export function createProduct(token: string, body: CreateProductBody) {
+  return request<Product>('/products', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+  })
+}
+
+// GET /products?companyId=...
+export function listProducts(token: string, companyId: string) {
+  return request<Product[]>(`/products?${new URLSearchParams({ companyId })}`, { token })
+}
+
+// GET /products/:productId
+export function getProduct(token: string, productId: string) {
+  return request<Product>(`/products/${productId}`, { token })
 }
 
 // ─── Discovery ─────────────────────────────────────────────────────────────

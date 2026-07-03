@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
 import { useApp } from '@/lib/context/AppContext'
-import { getDiscoverySummary, getBrandHealthSummary, ApiError } from '@/lib/api/client'
+import { getDiscoverySummary, getBrandHealthSummary, ApiError, type Product } from '@/lib/api/client'
 import { AlertCircle, RefreshCw } from 'lucide-react'
 
 import Sidebar from './Sidebar'
@@ -25,7 +25,23 @@ import type {
 } from './types'
 
 export default function DashboardLayout() {
-  const { productId, productName, companyName, role, auditType, summary, setSummary, getToken } = useApp()
+  // NOTE: `companyId` and `setProductId` are assumed here — if AppContext
+  // doesn't expose them yet, add them alongside the existing productId/
+  // setProductId pair (setProductId already exists; ProductOnboarding uses
+  // it). companyId is required by POST/GET /products and isn't derivable
+  // from anything else already in context.
+  const {
+    productId,
+    setProductId,
+    productName,
+    companyId,
+    companyName,
+    role,
+    auditType,
+    summary,
+    setSummary,
+    getToken,
+  } = useApp()
   const { user } = useUser()
   const { signOut } = useClerk()
 
@@ -98,6 +114,22 @@ export default function DashboardLayout() {
   const isAgency = role === 'agency'
   const userLabel = user?.firstName || user?.primaryEmailAddress?.emailAddress || 'Account'
 
+  // Switching products: point context at the new product and clear the
+  // cached summary so the effect above refetches for it.
+  //
+  // KNOWN GAP: neither GET /products nor POST /products returns which audit
+  // type (discovery vs. brand health) a product has run — `audit_status`
+  // only reflects context-scraping state, not that choice. `auditType`
+  // currently lives only in onboarding's local context state, so switching
+  // to a different product won't know which summary endpoint to call until
+  // the backend exposes that per-product (e.g. on the Product doc, or via a
+  // lightweight status field). Until then this will keep showing the
+  // previous product's audit type after a switch.
+  function handleProductChange(product: Product) {
+    setProductId(product._id)
+    setSummary(null)
+  }
+
   // ── Guard states ─────────────────────────────────────────────────────────
 
   if (!productId || !auditType) {
@@ -141,7 +173,11 @@ export default function DashboardLayout() {
         onCloseMobile={() => setMobileSidebarOpen(false)}
         workspaceLabel={workspaceLabel}
         isAgency={isAgency}
+        companyId={companyId}
+        productId={productId}
         productName={productName}
+        getToken={getToken}
+        onProductChange={handleProductChange}
         userLabel={userLabel}
         onSignOut={() => signOut({ redirectUrl: '/' })}
       />
