@@ -1,18 +1,27 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useApp } from '@/lib/context/AppContext'
 import {
   getDiscoveryProgress, getDiscoverySummary,
   getBrandHealthProgress, getBrandHealthSummary,
   ApiError,
 } from '@/lib/api/client'
+import type { AuditType } from '@/lib/context/AppContext'
 import { Signal, Loader2 } from 'lucide-react'
 
 const POLL_INTERVAL_MS = 25_000 // 25 seconds
 
-export default function AuditProgress() {
-  const { getToken, auditType, productId, setScreen, setSummary, setAuditProgress } = useApp()
+interface AuditProgressProps {
+  productId: string
+  auditType: AuditType
+  getToken: () => Promise<string>
+  // Called once the summary is fetched successfully — caller decides where
+  // to store it (AppContext during onboarding, local state during the
+  // dashboard-native setup flow) and where to navigate.
+  onDone: (summary: Record<string, unknown>) => void
+}
+
+export default function AuditProgress({ productId, auditType, getToken, onDone }: AuditProgressProps) {
   const [done, setDone] = useState(0)
   const [total, setTotal] = useState(0)
   const [statusMsg, setStatusMsg] = useState('Initializing audit…')
@@ -23,10 +32,9 @@ export default function AuditProgress() {
     for (let i = 0; i < retries; i++) {
       try {
         const s = auditType === 'discovery'
-          ? await getDiscoverySummary(token, productId!)
-          : await getBrandHealthSummary(token, productId!)
-        setSummary(s)
-        setScreen('dashboard')
+          ? await getDiscoverySummary(token, productId)
+          : await getBrandHealthSummary(token, productId)
+        onDone(s)
         return
       } catch (err) {
         if (err instanceof ApiError && err.status === 404 && i < retries - 1) {
@@ -48,7 +56,6 @@ export default function AuditProgress() {
 
       setDone(progress.done)
       setTotal(progress.total)
-      setAuditProgress(progress)
 
       if (progress.status === 'DONE' || progress.done >= progress.total) {
         if (intervalRef.current) clearInterval(intervalRef.current)

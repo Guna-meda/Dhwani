@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useUser, useClerk } from '@clerk/nextjs'
 import { useApp } from '@/lib/context/AppContext'
-import { getDiscoverySummary, getBrandHealthSummary, ApiError, type Product } from '@/lib/api/client'
+import { getDiscoverySummary, getBrandHealthSummary, ApiError } from '@/lib/api/client'
 import { AlertCircle, RefreshCw } from 'lucide-react'
 
 import Sidebar from './Sidebar'
@@ -23,32 +23,41 @@ import type {
   Engine,
   NavId,
 } from './types'
+import type { AuditType } from '@/lib/context/AppContext'
 
-export default function DashboardLayout() {
-  // NOTE: `companyId` and `setProductId` are assumed here — if AppContext
-  // doesn't expose them yet, add them alongside the existing productId/
-  // setProductId pair (setProductId already exists; ProductOnboarding uses
-  // it). companyId is required by POST/GET /products and isn't derivable
-  // from anything else already in context.
-  const {
-    productId,
-    setProductId,
-    productName,
-    companyId,
-    companyName,
-    role,
-    auditType,
-    summary,
-    setSummary,
-    getToken,
-  } = useApp()
+interface DashboardLayoutProps {
+  // Always supplied by app/dashboard/products/[productId]/page.tsx, which
+  // resolves setup-state before ever rendering this component — so by the
+  // time we're here, this product is confirmed to be fully onboarded
+  // (next_step === 'dashboard'). Local, not from AppContext: summary here
+  // is scoped to whichever product route is currently open, so switching
+  // products (via ProductSwitcher's router.push) always lands on a fresh
+  // instance of this component with the right data — no stale-summary risk.
+  productId: string
+  productName: string
+  auditType: AuditType
+}
+
+export default function DashboardLayout({ productId, productName, auditType }: DashboardLayoutProps) {
+  // companyId/companyName/role are account-level, not product-level — the
+  // signed-in user's current company context, which the workspace switcher
+  // (Sidebar) reads and can change via router navigation.
+  const { companyId, companyName, role, getToken } = useApp()
   const { user } = useUser()
   const { signOut } = useClerk()
 
   const [nav, setNav] = useState<NavId>('overview')
+  const [summary, setSummary] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  // Reset summary whenever the routed product changes, so we never render
+  // product A's data for a moment while product B's request is in flight.
+  useEffect(() => {
+    setSummary(null)
+    setError('')
+  }, [productId, auditType])
 
   useEffect(() => {
     if (summary || !productId || !auditType) return
@@ -86,7 +95,7 @@ export default function DashboardLayout() {
     return () => {
       cancelled = true
     }
-  }, [summary, productId, auditType, getToken, setSummary])
+  }, [summary, productId, auditType, getToken])
 
   const isDiscovery = auditType === 'discovery'
   const discovery = isDiscovery ? (summary as unknown as DiscoverySummaryData | null) : null
@@ -114,37 +123,7 @@ export default function DashboardLayout() {
   const isAgency = role === 'agency'
   const userLabel = user?.firstName || user?.primaryEmailAddress?.emailAddress || 'Account'
 
-  // Switching products: point context at the new product and clear the
-  // cached summary so the effect above refetches for it.
-  //
-  // KNOWN GAP: neither GET /products nor POST /products returns which audit
-  // type (discovery vs. brand health) a product has run — `audit_status`
-  // only reflects context-scraping state, not that choice. `auditType`
-  // currently lives only in onboarding's local context state, so switching
-  // to a different product won't know which summary endpoint to call until
-  // the backend exposes that per-product (e.g. on the Product doc, or via a
-  // lightweight status field). Until then this will keep showing the
-  // previous product's audit type after a switch.
-  function handleProductChange(product: Product) {
-    setProductId(product._id)
-    setSummary(null)
-  }
-
   // ── Guard states ─────────────────────────────────────────────────────────
-
-  if (!productId || !auditType) {
-    return (
-      <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <AlertCircle className="w-9 h-9 text-brand-muted mx-auto mb-3" />
-          <p className="text-base text-brand-text font-medium">No active audit found</p>
-          <p className="text-sm text-brand-muted mt-1">
-            Something&apos;s missing from your session — try refreshing the page.
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   if (error) {
     return (
@@ -173,11 +152,10 @@ export default function DashboardLayout() {
         onCloseMobile={() => setMobileSidebarOpen(false)}
         workspaceLabel={workspaceLabel}
         isAgency={isAgency}
-        companyId={companyId}
+        companyId={companyId ?? ''}
         productId={productId}
         productName={productName}
         getToken={getToken}
-        onProductChange={handleProductChange}
         userLabel={userLabel}
         onSignOut={() => signOut({ redirectUrl: '/' })}
       />

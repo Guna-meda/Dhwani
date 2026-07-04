@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useApp } from '@/lib/context/AppContext'
 import {
   editDiscoveryPrompt, deleteDiscoveryPrompt, addDiscoveryPrompt,
   editBrandHealthPrompt, deleteBrandHealthPrompt, addBrandHealthPrompt,
@@ -9,11 +8,27 @@ import {
   ApiError,
 } from '@/lib/api/client'
 import type { Prompt } from '@/lib/api/client'
+import type { AuditType } from '@/lib/context/AppContext'
 import { Pencil, Trash2, Plus, Check, X, Loader2, Play } from 'lucide-react'
 
-export default function ReviewPrompts() {
-  const { getToken, setScreen, auditType, productId, prompts, setPrompts } = useApp()
+interface ReviewPromptsProps {
+  productId: string
+  auditType: AuditType
+  prompts: Prompt[]
+  getToken: () => Promise<string>
+  onPromptsChange: (updater: (prev: Prompt[]) => Prompt[]) => void
+  // Called once confirm succeeds — caller decides where to navigate.
+  onConfirmed: () => void
+}
 
+export default function ReviewPrompts({
+  productId,
+  auditType,
+  prompts,
+  getToken,
+  onPromptsChange,
+  onConfirmed,
+}: ReviewPromptsProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [newPromptText, setNewPromptText] = useState('')
@@ -48,7 +63,7 @@ export default function ReviewPrompts() {
       } else {
         await editBrandHealthPrompt(token, promptId, editText.trim())
       }
-      setPrompts(prev => prev.map(p => p._id === promptId ? { ...p, prompt_text: editText.trim() } : p))
+      onPromptsChange(prev => prev.map(p => p._id === promptId ? { ...p, prompt_text: editText.trim() } : p))
       setEditingId(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to save.')
@@ -67,7 +82,7 @@ export default function ReviewPrompts() {
       } else {
         await deleteBrandHealthPrompt(token, promptId)
       }
-      setPrompts(prev => prev.filter(p => p._id !== promptId))
+      onPromptsChange(prev => prev.filter(p => p._id !== promptId))
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Cannot delete — minimum prompt count reached.')
     } finally {
@@ -84,7 +99,7 @@ export default function ReviewPrompts() {
       const created = isDiscovery
         ? await addDiscoveryPrompt(token, productId, newPromptText.trim())
         : await addBrandHealthPrompt(token, productId, newPromptText.trim())
-      setPrompts(prev => [...prev, created as Prompt])
+      onPromptsChange(prev => [...prev, created as Prompt])
       setNewPromptText('')
       setShowAddForm(false)
     } catch (err) {
@@ -105,7 +120,7 @@ export default function ReviewPrompts() {
       } else {
         await confirmBrandHealth(token, productId)
       }
-      setScreen('audit-progress')
+      onConfirmed()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to start audit.')
     } finally {

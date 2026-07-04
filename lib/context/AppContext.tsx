@@ -11,18 +11,25 @@
  *   signed in, next_step = company → Screen 2
  *   signed in, next_step = product → Screen 3
  *   signed in, next_step = done    → Screen 4 / 5 / 6 / 7
+ *
+ * This is deliberately still a single global, one-per-account flow — it's
+ * the correct model for "does this account have a first product yet",
+ * which only ever happens once. It is NOT used for adding a 2nd/3rd/Nth
+ * company or product — that's a separate, entity-scoped flow living under
+ * /dashboard/companies/new and /dashboard/products/[productId]/setup/*,
+ * each with its own local React state, so it can't clobber whatever's
+ * currently on screen here. See DashboardLayout / ProductSwitcher / the
+ * setup route pages for that flow.
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, { createContext, useContext, useEffect, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import {
   ApiError,
-  getBrandHealthProgress,
-  getDiscoveryProgress,
   getOnboardingStatus,
+  getProductSetupState,
   type OnboardingStatus,
   type Prompt,
-  type ProgressResponse,
 } from '@/lib/api/client'
 
 // ─── screen enum ──────────────────────────────────────────────────────────────
@@ -67,12 +74,7 @@ interface AppContextType {
 
   // prompts on Screen 5
   prompts: Prompt[]
-  setPrompts: (p: Prompt[]) => void
-
-  // progress on Screen 6
-  progress: ProgressResponse | null
-  setProgress: (p: ProgressResponse | null) => void
-  setAuditProgress: (p: ProgressResponse | null) => void
+  setPrompts: Dispatch<SetStateAction<Prompt[]>>
 
   // real summary from backend (Screen 7)
   summary: Record<string, unknown> | null
@@ -138,7 +140,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<'individual' | 'agency' | null>(null)
   const [auditType, setAuditType] = useState<AuditType | null>(null)
   const [prompts, setPrompts] = useState<Prompt[]>([])
-  const [progress, setProgress] = useState<ProgressResponse | null>(null)
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null)
   const [currentView, setView] = useState<DashboardView>('overview')
 
@@ -204,41 +205,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setProductId(product_id)
       }
 
-      // Check whether any audit has already been confirmed and is running/done
+      // Ask the backend directly which screen this product should resume
+      // on, instead of guessing by probing discovery-progress then
+      // brandhealth-progress and taking whichever responded. setup-state
+      // (GET /products/:productId/setup-state) is the single source of
+      // truth for this — see product.controller.js#getProductSetupState.
       if (product_id) {
-        let progressData: ProgressResponse | null = null
+        try {
+          const state = await getProductSetupState(token, product_id)
 
-        // Try discovery first, then brandhealth
-        for (const flow of ['discovery', 'brandhealth'] as AuditType[]) {
-          try {
-            const p = flow === 'discovery'
-              ? await getDiscoveryProgress(token, product_id)
-              : await getBrandHealthProgress(token, product_id)
-            if (p.total > 0) {
-              progressData = p
-              setAuditType(flow)
-              break
-            }
-          } catch {
-            // 404 / not started — try next
-          }
-        }
+          if (state.active_audit_type) setAuditType(state.active_audit_type)
 
-        if (progressData) {
-          if (progressData.status === 'DONE') {
-            setScreen('dashboard')
-          } else if (progressData.status === 'RUNNING') {
-            setProgress(progressData)
-            setScreen('audit-progress')
-          } else {
-            // IDLE with total > 0 means prompts were initialised but not confirmed
-            setScreen('review-prompts')
+          switch (state.next_step) {
+            case 'dashboard':
+              setScreen('dashboard')
+              return
+            case 'audit-progress':
+              setScreen('audit-progress')
+              return
+            case 'review-prompts':
+              setPrompts(state.prompts ?? [])
+              setScreen('review-prompts')
+              return
+            case 'context-failed':
+              // The audit run itself failed after a type was chosen — send
+              // them back to choose-audit so they can retry/switch type
+              // rather than getting stuck.
+              setScreen('choose-audit')
+              return
+            case 'choose-audit':
+            default:
+              setScreen('choose-audit')
+              return
           }
-          return
+        } catch (err) {
+          console.error('Failed to fetch setup state', err)
+          // Fall through to choose-audit — safest default for a product
+          // whose state we couldn't resolve.
         }
       }
 
-      // No audit started yet
+      // No product yet, or setup-state lookup failed
       setScreen('choose-audit')
     },
     []
@@ -330,7 +337,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setRole(null)
       setAuditType(null)
       setPrompts([])
-      setProgress(null)
       setSummary(null)
       return
     }
@@ -354,9 +360,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuditType,
         prompts,
         setPrompts,
-        progress,
-        setProgress,
-        setAuditProgress: setProgress,
         summary,
         setSummary,
         currentView,

@@ -8,17 +8,26 @@ const DEV_CLERK_ID_KEY = 'dhwani_dev_clerk_id'
 
 async function request<T>(
   path: string,
-  options: RequestInit & { token?: string } = {}
+  options: RequestInit & { token?: string; devClerkId?: string } = {}
 ): Promise<T> {
-  const { token, ...fetchOptions } = options
+  const { token, devClerkId, ...fetchOptions } = options
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(fetchOptions.headers as Record<string, string>),
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  if (typeof window !== 'undefined') {
-    const devClerkId = window.localStorage.getItem(DEV_CLERK_ID_KEY)
-    if (devClerkId) headers['x-dev-clerk-id'] = devClerkId
+
+  // Dev-only bypass header (see backend clerkAuth.middleware.js — only
+  // honored when DEV_AUTH_BYPASS=true on the server, ignored otherwise).
+  // Callers running in the browser get this from localStorage the same
+  // way they always have; server-side callers (e.g. the resolver Server
+  // Component, which has no window/localStorage) pass it explicitly since
+  // they already have the Clerk userId from auth() with no extra round trip.
+  if (devClerkId) {
+    headers['x-dev-clerk-id'] = devClerkId
+  } else if (typeof window !== 'undefined') {
+    const stored = window.localStorage.getItem(DEV_CLERK_ID_KEY)
+    if (stored) headers['x-dev-clerk-id'] = stored
   }
 
   const res = await fetch(`${BASE_URL}${path}`, { ...fetchOptions, headers })
@@ -116,7 +125,7 @@ export function submitProductOnboarding(
 // Dashboard-side product management — listing/creating/reading products for
 // an already-onboarded company. Mirrors controllers/product.controller.js.
 
-export type ProductAuditStatus = 'SCRAPING' | 'IDLE' | 'FAILED'
+export type ProductAuditStatus = 'SCRAPING' | 'IDLE' | 'RUNNING' | 'DONE' | 'FAILED'
 
 export type Product = {
   _id: string
@@ -158,8 +167,70 @@ export function listProducts(token: string, companyId: string) {
 }
 
 // GET /products/:productId
-export function getProduct(token: string, productId: string) {
-  return request<Product>(`/products/${productId}`, { token })
+export function getProduct(token: string, productId: string, devClerkId?: string) {
+  return request<Product>(`/products/${productId}`, { token, devClerkId })
+}
+
+// GET /products/:productId/setup-state
+// Single source of truth for "what screen should this product resume on".
+// Used by /dashboard/products/[productId] to redirect into the right setup
+// step, and by the product switcher before jumping to a product.
+export type SetupStateNextStep =
+  | 'choose-audit'
+  | 'review-prompts'
+  | 'audit-progress'
+  | 'dashboard'
+  | 'context-failed'
+
+export type SetupState = {
+  product_id: string
+  audit_status: ProductAuditStatus
+  active_audit_type: 'discovery' | 'brandhealth' | null
+  next_step: SetupStateNextStep
+  prompts?: Prompt[]
+  progress?: { done: number; total: number }
+}
+
+export function getProductSetupState(token: string, productId: string, devClerkId?: string) {
+  return request<SetupState>(`/products/${productId}/setup-state`, { token, devClerkId })
+}
+
+// ─── Companies ─────────────────────────────────────────────────────────────
+// Dashboard-side workspace management — mirrors controllers/company.controller.js.
+
+export type Company = {
+  _id: string
+  ownerId: string
+  name: string
+  country: string
+  product_count?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type CreateCompanyBody = {
+  name: string
+  country: string
+}
+
+// POST /companies — dashboard "add another workspace". 403s server-side if
+// the account is `individual` and already has one company.
+export function createCompany(token: string, body: CreateCompanyBody) {
+  return request<Company>('/companies', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+  })
+}
+
+// GET /companies — powers the workspace switcher's dropdown list.
+export function listCompanies(token: string) {
+  return request<Company[]>('/companies', { token })
+}
+
+// GET /companies/:companyId
+export function getCompany(token: string, companyId: string) {
+  return request<Company>(`/companies/${companyId}`, { token })
 }
 
 // ─── Discovery ─────────────────────────────────────────────────────────────

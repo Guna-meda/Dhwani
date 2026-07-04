@@ -1,8 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useApp } from '@/lib/context/AppContext'
-import { initDiscovery, initBrandHealth, ApiError } from '@/lib/api/client'
+import { initDiscovery, initBrandHealth, ApiError, type Prompt } from '@/lib/api/client'
 import type { AuditType } from '@/lib/context/AppContext'
 import { Search, Activity, ArrowRight } from 'lucide-react'
 
@@ -33,8 +32,17 @@ const AUDIT_OPTIONS = [
   },
 ]
 
-export default function ChooseAudit() {
-  const { getToken, setScreen, setAuditType, setPrompts, productId } = useApp()
+interface ChooseAuditProps {
+  productId: string
+  getToken: () => Promise<string>
+  // Called once initDiscovery/initBrandHealth succeeds — caller decides
+  // where the audit type + prompts live next (AppContext during onboarding,
+  // local route state during the dashboard-native setup flow) and where to
+  // navigate.
+  onChosen: (auditType: AuditType, prompts: Prompt[]) => void
+}
+
+export default function ChooseAudit({ productId, getToken, onChosen }: ChooseAuditProps) {
   const [loading, setLoading] = useState<AuditType | null>(null)
   const [error, setError] = useState('')
 
@@ -47,9 +55,7 @@ export default function ChooseAudit() {
       const res = type === 'discovery'
         ? await initDiscovery(token, productId)
         : await initBrandHealth(token, productId)
-      setAuditType(type)
-      setPrompts(res.prompts)
-      setScreen('review-prompts')
+      onChosen(type, res.prompts)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to initialize audit.')
     } finally {

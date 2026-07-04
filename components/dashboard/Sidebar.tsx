@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
 import {
   Signal,
@@ -14,9 +15,11 @@ import {
   LogOut,
   X,
   CheckCircle2,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react'
 import type { NavId } from './types'
-import type { Product } from '@/lib/api/client'
+import { listCompanies, listProducts, ApiError, type Company } from '@/lib/api/client'
 import ProductSwitcher from './ProductSwitcher'
 
 export const NAV_ITEMS: { id: NavId; label: string; icon: typeof LayoutDashboard }[] = [
@@ -38,7 +41,6 @@ interface SidebarProps {
   productId: string
   productName: string
   getToken: () => Promise<string>
-  onProductChange: (product: Product) => void
   userLabel: string
   onSignOut: () => void
 }
@@ -54,11 +56,71 @@ export default function Sidebar({
   productId,
   productName,
   getToken,
-  onProductChange,
   userLabel,
   onSignOut,
 }: SidebarProps) {
+  const router = useRouter()
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [companies, setCompanies] = useState<Company[] | null>(null)
+  const [loadError, setLoadError] = useState('')
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setWorkspaceMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
+
+  async function loadCompanies() {
+    if (companies) return
+    setLoadError('')
+    try {
+      const token = await getToken()
+      const list = await listCompanies(token)
+      setCompanies(list)
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : 'Could not load workspaces.')
+    }
+  }
+
+  function toggleMenu() {
+    if (!isAgency) return
+    setWorkspaceMenuOpen(o => !o)
+    loadCompanies()
+  }
+
+  // A company with no products yet isn't a useful place to land — chain
+  // straight into product creation for it, same as right after creating a
+  // brand-new company (Journey B). Otherwise jump to its most recent product;
+  // /dashboard/products/[productId] resolves setup-state from there.
+  async function handleSelectCompany(company: Company) {
+    if (company._id === companyId) { setWorkspaceMenuOpen(false); return }
+    setSwitchingTo(company._id)
+    try {
+      const token = await getToken()
+      const products = await listProducts(token, company._id)
+      setWorkspaceMenuOpen(false)
+      if (products.length > 0) {
+        router.push(`/dashboard/products/${products[0]._id}`)
+      } else {
+        router.push(`/dashboard/products/new?companyId=${company._id}`)
+      }
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : 'Could not switch workspace.')
+    } finally {
+      setSwitchingTo(null)
+    }
+  }
+
+  function handleNewWorkspace() {
+    setWorkspaceMenuOpen(false)
+    router.push('/dashboard/companies/new')
+  }
 
   return (
     <>
@@ -88,9 +150,9 @@ export default function Sidebar({
 
         <div className="flex-1 overflow-y-auto px-3 py-4">
           {/* Workspace switcher */}
-          <div className="relative mb-5 px-1">
+          <div className="relative mb-5 px-1" ref={menuRef}>
             <button
-              onClick={() => isAgency && setWorkspaceMenuOpen(o => !o)}
+              onClick={toggleMenu}
               className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg border border-brand-border bg-brand-bg/60 ${
                 isAgency ? 'hover:bg-brand-card cursor-pointer' : 'cursor-default'
               }`}
@@ -109,23 +171,52 @@ export default function Sidebar({
 
             {isAgency && workspaceMenuOpen && (
               <div className="absolute left-1 right-1 mt-1.5 bg-brand-surface border border-brand-border rounded-lg shadow-xl z-10 overflow-hidden">
-                <div className="px-3 py-2.5 flex items-center gap-2.5 bg-brand-primary/5">
-                  <div className="w-5 h-5 rounded bg-brand-primary/20 flex items-center justify-center text-[10px] font-bold text-brand-accent">
-                    {workspaceLabel.charAt(0).toUpperCase()}
-                  </div>
-                  <span className="text-sm text-brand-text font-medium truncate">{workspaceLabel}</span>
-                  <CheckCircle2 className="w-4 h-4 text-brand-accent ml-auto shrink-0" />
+                <div className="max-h-56 overflow-y-auto">
+                  {!companies && !loadError && (
+                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-brand-muted">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Loading workspaces…
+                    </div>
+                  )}
+                  {loadError && (
+                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-red-400">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      {loadError}
+                    </div>
+                  )}
+                  {companies?.map(c => {
+                    const isActive = c._id === companyId
+                    return (
+                      <button
+                        key={c._id}
+                        onClick={() => handleSelectCompany(c)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-brand-card transition-colors ${
+                          isActive ? 'bg-brand-primary/5' : ''
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded bg-brand-primary/20 flex items-center justify-center text-[10px] font-bold text-brand-accent shrink-0">
+                          {c.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-sm text-brand-text font-medium truncate flex-1">{c.name}</span>
+                        {switchingTo === c._id ? (
+                          <Loader2 className="w-4 h-4 text-brand-muted animate-spin shrink-0" />
+                        ) : isActive ? (
+                          <CheckCircle2 className="w-4 h-4 text-brand-accent shrink-0" />
+                        ) : (
+                          <span className="text-[10px] font-mono text-brand-muted shrink-0">
+                            {c.product_count ?? 0} product{c.product_count === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
                 <button
-                  disabled
-                  title="Multiple workspaces are coming soon"
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-brand-muted/50 cursor-not-allowed border-t border-brand-border"
+                  onClick={handleNewWorkspace}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-brand-accent hover:bg-brand-card border-t border-brand-border transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   New workspace
-                  <span className="ml-auto text-[10px] font-mono uppercase border border-brand-border rounded px-1 py-0.5">
-                    Soon
-                  </span>
                 </button>
               </div>
             )}
@@ -141,7 +232,6 @@ export default function Sidebar({
             activeProductId={productId}
             activeProductName={productName}
             getToken={getToken}
-            onProductChange={onProductChange}
           />
 
           {/* Report nav */}
