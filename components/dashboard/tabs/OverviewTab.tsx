@@ -1,15 +1,22 @@
 'use client'
 
-import { Skeleton } from '../UIBits'
+import { useMemo } from 'react'
+import { ArrowRight, BookOpen } from 'lucide-react'
+import { Skeleton, EngineChips } from '../UIBits'
 import { pct } from '../utils'
+import { groupByPrompt } from '../utils'
 import {
   ENGINE_META,
   INTENT_LABELS,
+  SENTIMENT_META,
   type BrandHealthEngineMetric,
+  type BrandHealthPerPrompt,
   type BrandHealthSummaryData,
   type DiscoveryEngineMetric,
+  type DiscoveryPerPrompt,
   type DiscoverySummaryData,
   type Engine,
+  type NavId,
 } from '../types'
 
 interface OverviewTabProps {
@@ -19,6 +26,36 @@ interface OverviewTabProps {
   enginesRun: Engine[]
   perEngine: Record<string, DiscoveryEngineMetric | BrandHealthEngineMetric>
   intentBreakdown: Record<string, BrandHealthEngineMetric>
+  // Lets the summary boxes below ("View more") jump straight to the tab
+  // with the full data, instead of duplicating that tab's UI here.
+  onNavigate?: (nav: NavId) => void
+  // Docs lives at its own top-level route (/docs), not as a tab inside this
+  // dashboard, so it gets its own navigation callback instead of onNavigate.
+  onOpenDocs?: () => void
+}
+
+// One row in the "Top cited prompts" box — a prompt that was mentioned by
+// at least one engine, collapsed across engines the same way PromptsTab
+// does, plus whatever ranking signal each audit type actually has
+// (position for Discovery, sentiment for Brand Health).
+interface TopPromptRow {
+  promptId: string
+  prompt_text: string
+  engines: Engine[]
+  position: number | null
+  sentiment: string | null
+}
+
+function ViewMoreButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-xs font-mono text-brand-accent hover:underline shrink-0"
+    >
+      {label}
+      <ArrowRight className="w-3 h-3" />
+    </button>
+  )
 }
 
 export default function OverviewTab({
@@ -28,12 +65,77 @@ export default function OverviewTab({
   enginesRun,
   perEngine,
   intentBreakdown,
+  onNavigate,
+  onOpenDocs,
 }: OverviewTabProps) {
   const combined = discovery?.combined ?? brandHealth?.combined
   const mentionRate = combined?.mention_rate_pct ?? 0
   const totalPrompts =
     combined && ('total_prompts' in combined ? combined.total_prompts : combined.prompts_run)
   const mentionedCount = combined?.mentioned_count ?? 0
+
+  const promptRows = (discovery?.per_prompt ?? brandHealth?.per_prompt ?? []) as (
+    | DiscoveryPerPrompt
+    | BrandHealthPerPrompt
+  )[]
+
+  // Top 5 prompts the client was actually cited/mentioned in — sorted by
+  // best position for Discovery (lower is better), or by best sentiment
+  // for Brand Health (recommended beats a plain mention).
+  const topPrompts = useMemo<TopPromptRow[]>(() => {
+    const grouped = groupByPrompt(promptRows)
+
+    const cited = grouped
+      .map(g => {
+        const entries = Object.entries(g.byEngine) as [Engine, DiscoveryPerPrompt | BrandHealthPerPrompt][]
+        const mentionedEngines = entries.filter(([, r]) => r?.mentioned).map(([e]) => e)
+        if (mentionedEngines.length === 0) return null
+
+        const results = entries.map(([, r]) => r)
+        const positions = results
+          .map(r => ('position' in r ? r.position : null))
+          .filter((p): p is number => p != null)
+        const bestPosition = positions.length ? Math.min(...positions) : null
+
+        const sentiments = results.map(r => ('sentiment' in r ? r.sentiment : null)).filter(Boolean) as string[]
+        const bestSentiment: string | null = sentiments.includes('recommended')
+          ? 'recommended'
+          : sentiments.length > 0
+            ? sentiments[0]
+            : null
+
+        return {
+          promptId: g.promptId,
+          prompt_text: g.prompt_text,
+          engines: mentionedEngines,
+          position: bestPosition,
+          sentiment: bestSentiment,
+        }
+      })
+      .filter((r): r is TopPromptRow => r !== null)
+
+    cited.sort((a, b) => {
+      if (discovery) {
+        if (a.position == null) return 1
+        if (b.position == null) return -1
+        return a.position - b.position
+      }
+      const rank = (s: string | null) => (s === 'recommended' ? 0 : 1)
+      return rank(a.sentiment) - rank(b.sentiment)
+    })
+
+    return cited.slice(0, 5)
+  }, [promptRows, discovery])
+
+  const topCitations = useMemo(
+    () => [...(discovery?.citation_source_map ?? [])].sort((a, b) => b.citation_share_pct - a.citation_share_pct).slice(0, 5),
+    [discovery]
+  )
+
+  const topCompetitors = useMemo(
+    () => [...(discovery?.competitor_landscape ?? [])].sort((a, b) => b.appearances - a.appearances).slice(0, 10),
+    [discovery]
+  )
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -138,6 +240,129 @@ export default function OverviewTab({
         )}
       </div>
 
+      {/* Top cited prompts — relevant to both audit types, since both track
+          per-prompt mentions. Ranked by position (Discovery) or sentiment
+          (Brand Health). */}
+      <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-medium text-brand-text">Top cited prompts</h3>
+          {!loading && topPrompts.length > 0 && onNavigate && (
+            <ViewMoreButton label="View more" onClick={() => onNavigate('prompts')} />
+          )}
+        </div>
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+          </div>
+        ) : topPrompts.length === 0 ? (
+          <p className="text-sm text-brand-muted py-6 text-center">No cited prompts yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {topPrompts.map((p, i) => (
+              <div
+                key={p.promptId}
+                className="flex items-center gap-3 px-3 py-2.5 bg-brand-bg rounded-lg border border-brand-border/60"
+              >
+                <span className="text-xs font-mono text-brand-muted w-5 shrink-0">{i + 1}</span>
+                <span className="flex-1 min-w-0 text-sm text-brand-text truncate">{p.prompt_text}</span>
+                <div className="shrink-0 flex items-center gap-2">
+                  {discovery && p.position != null && (
+                    <span className="text-xs font-mono text-brand-muted">#{p.position}</span>
+                  )}
+                  {brandHealth && p.sentiment && SENTIMENT_META[p.sentiment] && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${SENTIMENT_META[p.sentiment].className}`}
+                    >
+                      {SENTIMENT_META[p.sentiment].label}
+                    </span>
+                  )}
+                  <EngineChips engines={p.engines} size="xs" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Citation sources and competitor landscape only exist for Discovery
+          audits — Brand Health tracks neither, so these boxes simply don't
+          render on that tab instead of showing an empty/fake state. */}
+      {discovery && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-medium text-brand-text">Top citation sources</h3>
+              {!loading && topCitations.length > 0 && onNavigate && (
+                <ViewMoreButton label="View more" onClick={() => onNavigate('citations')} />
+              )}
+            </div>
+            {loading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12" />
+                <Skeleton className="h-12" />
+                <Skeleton className="h-12" />
+              </div>
+            ) : topCitations.length === 0 ? (
+              <p className="text-sm text-brand-muted py-6 text-center">No citation sources were detected.</p>
+            ) : (
+              <div className="space-y-2">
+                {topCitations.map((c, i) => (
+                  <div
+                    key={c.domain}
+                    className="flex items-center justify-between px-3 py-2.5 bg-brand-bg rounded-lg border border-brand-border/60"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-xs font-mono text-brand-muted w-5 shrink-0">{i + 1}</span>
+                      <span className="text-sm font-medium text-brand-text truncate">{c.domain}</span>
+                    </div>
+                    <span className="text-sm font-mono text-brand-accent font-semibold shrink-0">
+                      {pct(c.citation_share_pct)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-medium text-brand-text">Top competitors</h3>
+              {!loading && topCompetitors.length > 0 && onNavigate && (
+                <ViewMoreButton label="View more" onClick={() => onNavigate('competitors')} />
+              )}
+            </div>
+            {loading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-12" />
+                <Skeleton className="h-12" />
+                <Skeleton className="h-12" />
+              </div>
+            ) : topCompetitors.length === 0 ? (
+              <p className="text-sm text-brand-muted py-6 text-center">No competitors were named in the responses.</p>
+            ) : (
+              <div className="space-y-2">
+                {topCompetitors.map((c, i) => (
+                  <div
+                    key={c.name}
+                    className="flex items-center justify-between px-3 py-2.5 bg-brand-bg rounded-lg border border-brand-border/60"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-xs font-mono text-brand-muted w-5 shrink-0">{i + 1}</span>
+                      <span className="text-sm font-medium text-brand-text truncate">{c.name}</span>
+                    </div>
+                    <span className="text-xs font-mono text-brand-muted shrink-0">
+                      {c.appearances} appearance{c.appearances !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {brandHealth && Object.keys(intentBreakdown).length > 0 && (
         <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
           <h3 className="text-base font-medium text-brand-text mb-4">Mention rate by intent category</h3>
@@ -152,6 +377,21 @@ export default function OverviewTab({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Docs is a fully separate route (/docs) — general, not scoped to
+          this product or audit type — so this leaves the dashboard rather
+          than switching an internal tab. */}
+      {onOpenDocs && (
+        <div className="flex justify-center pt-1">
+          <button
+            onClick={onOpenDocs}
+            className="flex items-center gap-1.5 text-sm font-medium text-brand-muted hover:text-brand-text border border-brand-border rounded-lg px-4 py-2 transition-colors hover:bg-brand-card/40"
+          >
+            <BookOpen className="w-4 h-4" />
+            View docs
+          </button>
         </div>
       )}
     </div>

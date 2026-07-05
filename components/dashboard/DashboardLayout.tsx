@@ -251,6 +251,8 @@ export default function DashboardLayout({ productId, productName, audits, initia
               enginesRun={enginesRun}
               perEngine={perEngine}
               intentBreakdown={intentBreakdown}
+              onNavigate={setNav}
+              onOpenDocs={() => router.push('/docs')}
             />
           )}
 

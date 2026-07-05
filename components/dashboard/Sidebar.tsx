@@ -18,17 +18,29 @@ import {
   Loader2,
   AlertCircle,
   Building2,
+  BookOpen,
+  Store,
 } from 'lucide-react'
 import type { NavId } from './types'
 import { listCompanies, listProducts, ApiError, type Company } from '@/lib/api/client'
 import ProductSwitcher from './ProductSwitcher'
 
+// Tabs that live inside THIS product's audit dashboard — switching between
+// them just swaps `nav` state, no navigation, no data reload.
 export const NAV_ITEMS: { id: NavId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'prompts', label: 'Prompts', icon: MessageSquareText },
   { id: 'recommendations', label: 'Recommendations', icon: Sparkles },
   { id: 'citations', label: 'Citations', icon: Quote },
   { id: 'competitors', label: 'Competitors', icon: Users },
+]
+
+// Destinations that are NOT scoped to a product or audit — real routes of
+// their own (e.g. /docs), not a `nav` state value. Rendered below a divider
+// so it's visually clear they leave the current product's context.
+const GLOBAL_NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
+  { href: '/docs', label: 'Docs', icon: BookOpen },
+  { href: '/marketplace', label: 'Marketplace', icon: Store },
 ]
 
 interface SidebarProps {
@@ -246,8 +258,9 @@ export default function Sidebar({
             getToken={getToken}
           />
 
-          {/* Report nav */}
-          <nav className="space-y-0.5 mb-6">
+          {/* Report nav — everything above the divider belongs to this
+              product's audit dashboard. */}
+          <nav className="space-y-0.5 mb-4">
             {NAV_ITEMS.map(item => {
               const Icon = item.icon
               const isActive = nav === item.id
@@ -260,6 +273,26 @@ export default function Sidebar({
                       ? 'bg-brand-primary/10 text-brand-accent'
                       : 'text-brand-muted hover:text-brand-text hover:bg-brand-card/50'
                   }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+
+          {/* Divider — below this, items are app-wide destinations, not
+              part of this (or any) product's audit dashboard. */}
+          <div className="border-t border-brand-border mx-1 mb-4" />
+
+          <nav className="space-y-0.5 mb-6">
+            {GLOBAL_NAV_ITEMS.map(item => {
+              const Icon = item.icon
+              return (
+                <button
+                  key={item.href}
+                  onClick={() => { router.push(item.href); onCloseMobile() }}
+                  className="w-full flex items-center gap-2.5 pl-8 pr-3 py-2.5 text-sm font-medium rounded-lg text-left text-brand-muted hover:text-brand-text hover:bg-brand-card/50 transition-colors"
                 >
                   <Icon className="w-4 h-4" />
                   <span>{item.label}</span>
