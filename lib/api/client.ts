@@ -125,7 +125,11 @@ export function submitProductOnboarding(
 // Dashboard-side product management — listing/creating/reading products for
 // an already-onboarded company. Mirrors controllers/product.controller.js.
 
-export type ProductAuditStatus = 'SCRAPING' | 'IDLE' | 'RUNNING' | 'DONE' | 'FAILED'
+// Product-level context/scrape lifecycle only — unrelated to any specific
+// audit run. See models/product.model.js.
+export type ProductContextStatus = 'SCRAPING' | 'IDLE' | 'FAILED'
+
+export type AuditRunStatus = 'NOT_STARTED' | 'RUNNING' | 'DONE' | 'FAILED'
 
 export type Product = {
   _id: string
@@ -135,7 +139,11 @@ export type Product = {
   product_description: string | null
   domain: string
   country: string
-  audit_status: ProductAuditStatus
+  audit_status: ProductContextStatus
+  audits: {
+    discovery: { status: AuditRunStatus; startedAt: string | null; completedAt: string | null }
+    brandhealth: { status: AuditRunStatus; startedAt: string | null; completedAt: string | null }
+  }
   context?: Record<string, unknown> | null
   createdAt?: string
   updatedAt?: string
@@ -171,10 +179,27 @@ export function getProduct(token: string, productId: string, devClerkId?: string
   return request<Product>(`/products/${productId}`, { token, devClerkId })
 }
 
+// DELETE /products/:productId — cascades on the backend across prompts,
+// audit reports, and both summary types. `confirmName` must exactly match
+// the product's name (server-side enforced, not just a UI gate) — same
+// "type the name to confirm" pattern GitHub uses for repo deletion.
+// Rejected with 409 if an audit is currently RUNNING on this product.
+export function deleteProduct(token: string, productId: string, confirmName: string, devClerkId?: string) {
+  return request<{ deleted_id: string }>(`/products/${productId}`, {
+    method: 'DELETE',
+    token,
+    devClerkId,
+    body: JSON.stringify({ confirm_name: confirmName }),
+  })
+}
+
 // GET /products/:productId/setup-state
-// Single source of truth for "what screen should this product resume on".
-// Used by /dashboard/products/[productId] to redirect into the right setup
-// step, and by the product switcher before jumping to a product.
+// Single source of truth for "what screen should this product resume on" —
+// AND for both audits' state at once. Discovery and Brand Health are
+// independent: one can be DONE while the other is RUNNING or never started,
+// on the same product. `default_view` is which tab the dashboard should open
+// on; `next_step` is only used by the resolver, for the case where NEITHER
+// audit has any progress yet.
 export type SetupStateNextStep =
   | 'choose-audit'
   | 'review-prompts'
@@ -182,13 +207,22 @@ export type SetupStateNextStep =
   | 'dashboard'
   | 'context-failed'
 
-export type SetupState = {
-  product_id: string
-  audit_status: ProductAuditStatus
-  active_audit_type: 'discovery' | 'brandhealth' | null
+export type AuditTypeState = {
+  status: AuditRunStatus
   next_step: SetupStateNextStep
   prompts?: Prompt[]
   progress?: { done: number; total: number }
+}
+
+export type SetupState = {
+  product_id: string
+  context_status: ProductContextStatus
+  audits: {
+    discovery: AuditTypeState
+    brandhealth: AuditTypeState
+  }
+  default_view: 'discovery' | 'brandhealth' | null
+  next_step: SetupStateNextStep
 }
 
 export function getProductSetupState(token: string, productId: string, devClerkId?: string) {
@@ -204,6 +238,7 @@ export type Company = {
   name: string
   country: string
   product_count?: number
+  stats?: { discovery_done: number; brandhealth_done: number }
   createdAt?: string
   updatedAt?: string
 }
@@ -245,7 +280,7 @@ export type PromptsResponse = {
 }
 
 export type ProgressResponse = {
-  status: 'IDLE' | 'RUNNING' | 'DONE'
+  status: AuditRunStatus
   done: number
   total: number
 }

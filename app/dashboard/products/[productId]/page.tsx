@@ -1,102 +1,111 @@
-import { redirect } from 'next/navigation'
-import { auth } from '@clerk/nextjs/server'
-import { getProductSetupState, getProduct, ApiError, type SetupState, type Product } from '@/lib/api/client'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { useApp } from '@/lib/context/AppContext'
+import { getProduct, getProductSetupState, ApiError, type SetupState, type Product } from '@/lib/api/client'
 import DashboardLayout from '@/components/dashboard/DashboardLayout'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, Signal } from 'lucide-react'
 
-/**
- * The resolver.
- *
- * This is the ONLY place that knows what a `next_step` value means. Every
- * path into a product — the product switcher, the workspace switcher, a
- * bookmarked link, a browser refresh mid-setup — always lands here first,
- * because every one of those just does `router.push('/dashboard/products/'
- * + id)`. Nobody else inspects `next_step`, so nobody else has to change
- * when the backend adds one.
- *
- * It's an async Server Component: it resolves setup-state on the server
- * and calls next/navigation's `redirect()` before any HTML is sent, so
- * there's no client-side loading flash for the redirect cases — only the
- * `dashboard` case actually renders something here.
- *
- * Adding a new step (e.g. a hypothetical `billing-required`) is a two-line
- * change: one `case` here, and the setup page it points to. ProductSwitcher,
- * Sidebar, DashboardLayout, and AppContext don't get touched — they've
- * never heard of `next_step` and don't need to.
- */
-export default async function ProductPage({
-  params,
-}: {
-  params: Promise<{ productId: string }>
-}) {
-  const { productId } = await params
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-brand-bg flex items-center justify-center">
+      <div className="flex items-center gap-2 text-brand-muted">
+        <Signal className="w-5 h-5 animate-pulse text-brand-accent" />
+        <span className="text-sm font-mono">Loading…</span>
+      </div>
+    </div>
+  )
+}
 
-  const { userId, getToken } = await auth()
-  const token = await getToken()
+// This is the resolver every other setup page routes back to (see the
+// comments in setup/progress and setup/audit-type). Its one job: ask
+// setup-state what's actually going on with this product, then either
+// bounce to whichever setup step is still incomplete, or render the real
+// dashboard. Nothing else in the app should assume "dashboard" is safe to
+// render without going through this check first.
+export default function ProductResolverPage() {
+  const params = useParams<{ productId: string }>()
+  const productId = params.productId
+  const router = useRouter()
+  const { getToken } = useApp()
 
-  // No session at all — let the root page's auth gate (landing / sign-in
-  // modal) handle it rather than duplicating that logic here.
-  if (!token && !userId) redirect('/')
+  const [setupState, setSetupState] = useState<SetupState | null>(null)
+  const [product, setProduct] = useState<Product | null>(null)
+  const [error, setError] = useState('')
 
-  // Dev-only: mirrors what every client-side call already does via
-  // localStorage (see AppContext.getToken() / lib/api/client.ts). Server
-  // Components have no window/localStorage to read that from, so it's
-  // passed explicitly here instead. Ignored by the backend entirely unless
-  // DEV_AUTH_BYPASS=true is set there — safe to always pass in non-prod.
-  const devClerkId = process.env.NODE_ENV !== 'production' ? (userId ?? undefined) : undefined
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const [state, prod] = await Promise.all([
+          getProductSetupState(token, productId),
+          getProduct(token, productId),
+        ])
+        if (cancelled) return
 
-  let setupState: SetupState
-  let product: Product | null = null
+        // Context scrape failed — no audit can start until that's fixed.
+        // Nothing to resolve into; show it directly instead of bouncing
+        // into a setup step that will just fail again.
+        if (state.context_status === 'FAILED') {
+          setError("We couldn't analyze this product's website, so no audit can run yet.")
+          return
+        }
 
-  try {
-    setupState = await getProductSetupState(token ?? '', productId, devClerkId)
-    // Only fetch the product itself when we're actually about to render
-    // the dashboard — every other branch redirects immediately and never
-    // needs it.
-    if (setupState.next_step === 'dashboard') {
-      product = await getProduct(token ?? '', productId, devClerkId)
+        // At least one audit reached DONE — that's the dashboard-ready case.
+        if (state.default_view) {
+          setSetupState(state)
+          setProduct(prod)
+          return
+        }
+
+        // Neither audit is done. If either one is mid-flow (has prompts to
+        // review or is running), resume THAT one, on its own step — don't
+        // fall back to top-level next_step here, since that only reflects
+        // the "nothing started yet" case.
+        const inProgress = (['discovery', 'brandhealth'] as const)
+          .map(type => ({ type, ...state.audits[type] }))
+          .find(a => a.next_step === 'review-prompts' || a.next_step === 'audit-progress')
+
+        if (inProgress) {
+          const step = inProgress.next_step === 'review-prompts' ? 'prompts' : 'progress'
+          router.replace(`/dashboard/products/${productId}/setup/${step}?auditType=${inProgress.type}`)
+          return
+        }
+
+        // Nothing started at all — send them to pick Discovery or Brand Health.
+        router.replace(`/dashboard/products/${productId}/setup/audit-type`)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load this product.')
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-  } catch (err) {
-    const message = err instanceof ApiError ? err.message : 'Could not load this product.'
+  }, [productId, getToken, router])
+
+  if (error) {
     return (
       <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
         <div className="text-center max-w-sm">
           <AlertCircle className="w-9 h-9 text-red-400 mx-auto mb-3" />
-          <p className="text-base text-brand-text font-medium">{message}</p>
+          <p className="text-sm text-brand-text">{error}</p>
         </div>
       </div>
     )
   }
 
-  // redirect() throws internally — it must not be inside the try/catch
-  // above, or Next.js's own redirect signal gets swallowed as an error.
-  switch (setupState.next_step) {
-    case 'choose-audit':
-      redirect(`/dashboard/products/${productId}/setup/audit-type`)
-
-    case 'review-prompts':
-      redirect(`/dashboard/products/${productId}/setup/prompts?auditType=${setupState.active_audit_type}`)
-
-    case 'audit-progress':
-      redirect(`/dashboard/products/${productId}/setup/progress?auditType=${setupState.active_audit_type}`)
-
-    case 'context-failed':
-      // The audit run itself failed after a type was chosen — send them
-      // back to choose-audit so they can retry or switch type rather than
-      // getting stuck on a dead end.
-      redirect(`/dashboard/products/${productId}/setup/audit-type`)
-
-    case 'dashboard':
-      return (
-        <DashboardLayout
-          productId={productId}
-          productName={product!.product_name}
-          auditType={setupState.active_audit_type!}
-        />
-      )
-
-    // Example of what adding a step looks like later:
-    // case 'billing-required':
-    //   redirect(`/dashboard/products/${productId}/setup/billing`)
+  if (!setupState || !product) {
+    return <LoadingScreen />
   }
+
+  return (
+    <DashboardLayout
+      productId={productId}
+      productName={product.product_name}
+      audits={setupState.audits}
+      initialTab={setupState.default_view!}
+    />
+  )
 }

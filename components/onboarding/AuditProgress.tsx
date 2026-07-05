@@ -70,13 +70,30 @@ export default function AuditProgress({ productId, auditType, getToken, onDone }
   }
 
   useEffect(() => {
+    // Reset local state on every (productId, auditType) change — without
+    // this, switching from a finished Discovery run to a fresh Brand Health
+    // run on the same product would briefly show Discovery's leftover
+    // done/total/statusMsg before the first real poll overwrites them.
+    setDone(0)
+    setTotal(0)
+    setStatusMsg('Initializing audit…')
+    setError('')
+
     poll()
     intervalRef.current = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
+    // Deliberately includes productId/auditType — this is what makes the
+    // effect (and the `poll` closure it schedules) restart with the right
+    // values if this same component instance ever gets reused for a
+    // different audit run instead of remounting. See also the `key` prop
+    // on the parent's <AuditProgress> usage, which forces a full remount
+    // for the same reason — belt and suspenders, since a stale interval
+    // here was silently polling the WRONG audit type's progress and firing
+    // onDone() based on an already-finished, unrelated run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [productId, auditType])
 
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 

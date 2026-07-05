@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { initDiscovery, initBrandHealth, ApiError, type Prompt } from '@/lib/api/client'
+import { initDiscovery, initBrandHealth, ApiError, type Prompt, type AuditRunStatus } from '@/lib/api/client'
 import type { AuditType } from '@/lib/context/AppContext'
-import { Search, Activity, ArrowRight } from 'lucide-react'
+import { Search, Activity, ArrowRight, Check, Loader2 } from 'lucide-react'
 
 const AUDIT_OPTIONS = [
   {
@@ -40,9 +40,23 @@ interface ChooseAuditProps {
   // local route state during the dashboard-native setup flow) and where to
   // navigate.
   onChosen: (auditType: AuditType, prompts: Prompt[]) => void
+  // Optional: current status of each type on this product. A product can
+  // have Discovery DONE while Brand Health is untouched (or vice versa) —
+  // when provided, an already-DONE/RUNNING type is shown as its real state
+  // instead of being re-offered as a blank choice that would just
+  // re-trigger init (harmless, but confusing — "why are my old prompts
+  // showing up for something I haven't started").
+  existingAudits?: Record<AuditType, { status: AuditRunStatus }>
+  onAlreadyStarted?: (auditType: AuditType, status: AuditRunStatus) => void
 }
 
-export default function ChooseAudit({ productId, getToken, onChosen }: ChooseAuditProps) {
+export default function ChooseAudit({
+  productId,
+  getToken,
+  onChosen,
+  existingAudits,
+  onAlreadyStarted,
+}: ChooseAuditProps) {
   const [loading, setLoading] = useState<AuditType | null>(null)
   const [error, setError] = useState('')
 
@@ -75,10 +89,20 @@ export default function ChooseAudit({ productId, getToken, onChosen }: ChooseAud
           {AUDIT_OPTIONS.map(opt => {
             const Icon = opt.icon
             const isLoading = loading === opt.id
+            const status = existingAudits?.[opt.id]?.status ?? 'NOT_STARTED'
+            const isDone = status === 'DONE'
+            const isRunning = status === 'RUNNING'
+
             return (
               <button
                 key={opt.id}
-                onClick={() => handleChoose(opt.id)}
+                onClick={() => {
+                  if (isDone || isRunning) {
+                    onAlreadyStarted?.(opt.id, status)
+                    return
+                  }
+                  handleChoose(opt.id)
+                }}
                 disabled={!!loading}
                 className={`w-full text-left p-6 rounded-2xl border transition-all duration-200 group
                   ${opt.bg} ${opt.border}
@@ -93,9 +117,19 @@ export default function ChooseAudit({ productId, getToken, onChosen }: ChooseAud
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-display font-semibold text-brand-text">{opt.title}</span>
-                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${opt.color} ${opt.border} ${opt.bg}`}>
-                          {opt.prompts}
-                        </span>
+                        {isDone ? (
+                          <span className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border border-brand-accent/40 bg-brand-accent/10 text-brand-accent">
+                            <Check className="w-2.5 h-2.5" /> done
+                          </span>
+                        ) : isRunning ? (
+                          <span className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded border border-brand-border bg-brand-card text-brand-muted">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" /> running
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${opt.color} ${opt.border} ${opt.bg}`}>
+                            {opt.prompts}
+                          </span>
+                        )}
                       </div>
                       <p className={`text-sm font-medium mb-2 ${opt.color}`}>{opt.tagline}</p>
                       <p className="text-xs text-brand-muted leading-relaxed">{opt.description}</p>

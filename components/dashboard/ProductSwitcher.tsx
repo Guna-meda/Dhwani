@@ -114,7 +114,9 @@ export default function ProductSwitcher({
                   {p.product_name.charAt(0).toUpperCase()}
                 </div>
                 <span className="text-sm text-brand-text truncate flex-1">{p.product_name}</span>
-                {(p.audit_status === 'SCRAPING' || p.audit_status === 'RUNNING') && (
+                {(p.audit_status === 'SCRAPING' ||
+                  p.audits?.discovery?.status === 'RUNNING' ||
+                  p.audits?.brandhealth?.status === 'RUNNING') && (
                   <Loader2 className="w-3 h-3 text-brand-muted animate-spin shrink-0" />
                 )}
                 {p.audit_status === 'FAILED' && (

@@ -214,7 +214,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         try {
           const state = await getProductSetupState(token, product_id)
 
-          if (state.active_audit_type) setAuditType(state.active_audit_type)
+          // default_view is whichever audit is furthest along (Discovery and
+          // Brand Health are resolved independently server-side — see
+          // getProductSetupState). During this first-product onboarding gate
+          // there's realistically only ever one in progress at a time, so
+          // this is the direct analog of the old single active_audit_type.
+          if (state.default_view) setAuditType(state.default_view)
 
           switch (state.next_step) {
             case 'dashboard':
@@ -224,13 +229,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               setScreen('audit-progress')
               return
             case 'review-prompts':
-              setPrompts(state.prompts ?? [])
+              setPrompts(state.default_view ? state.audits[state.default_view].prompts ?? [] : [])
               setScreen('review-prompts')
               return
             case 'context-failed':
-              // The audit run itself failed after a type was chosen — send
-              // them back to choose-audit so they can retry/switch type
-              // rather than getting stuck.
+              // Context extraction never succeeded and neither audit has
+              // any progress — send them back to choose-audit so they can
+              // retry rather than getting stuck.
               setScreen('choose-audit')
               return
             case 'choose-audit':

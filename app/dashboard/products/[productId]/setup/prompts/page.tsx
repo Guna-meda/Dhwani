@@ -38,6 +38,15 @@ export default function ReviewPromptsPage() {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
 
+  // Same self-heal as the progress page: a stale history/bfcache entry
+  // without ?auditType shouldn't dead-end here — send it back through the
+  // resolver, which recomputes setup-state fresh.
+  useEffect(() => {
+    if (!auditType) {
+      router.replace(`/dashboard/products/${productId}`)
+    }
+  }, [auditType, productId, router])
+
   useEffect(() => {
     if (!auditType) return
     let cancelled = false
@@ -58,14 +67,7 @@ export default function ReviewPromptsPage() {
   let body: React.ReactNode
 
   if (!auditType) {
-    body = (
-      <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
-        <div className="text-center max-w-sm">
-          <AlertCircle className="w-9 h-9 text-brand-muted mx-auto mb-3" />
-          <p className="text-sm text-brand-text">Missing audit type — go back and choose one.</p>
-        </div>
-      </div>
-    )
+    body = <LoadingScreen />
   } else if (error) {
     body = (
       <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">

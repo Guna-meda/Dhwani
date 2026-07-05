@@ -98,6 +98,7 @@ export default function Page() {
 
       {screen === 'audit-progress' && productId && auditType && (
         <AuditProgress
+          key={`${productId}-${auditType}`}
           productId={productId}
           auditType={auditType}
           getToken={getToken}

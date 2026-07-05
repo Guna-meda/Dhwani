@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Loader2,
   AlertCircle,
+  Building2,
 } from 'lucide-react'
 import type { NavId } from './types'
 import { listCompanies, listProducts, ApiError, type Company } from '@/lib/api/client'
@@ -221,6 +222,17 @@ export default function Sidebar({
               </div>
             )}
           </div>
+
+          {/* My Workspace — workspace-level info + all products in it,
+              independent of whichever product's dashboard is currently
+              open. Always visible regardless of the active product. */}
+          <button
+            onClick={() => router.push(`/dashboard/companies/${companyId}`)}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 mb-4 text-sm font-medium rounded-lg text-left text-brand-muted hover:text-brand-text hover:bg-brand-card/50 transition-colors border border-brand-border"
+          >
+            <Building2 className="w-4 h-4" />
+            My Workspace
+          </button>
 
           <span className="block px-3 text-[10px] font-mono text-brand-muted uppercase tracking-wider mb-2">
             Brand Report
