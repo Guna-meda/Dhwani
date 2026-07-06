@@ -380,3 +380,168 @@ export function getBrandHealthProgress(token: string, productId: string) {
 export function getBrandHealthSummary(token: string, productId: string) {
   return request<Record<string, unknown>>(`/brandhealth/summary/${productId}`, { token })
 }
+
+// ─── Playground: Marketplace / Cart / Flows / Flow Runs ────────────────────
+// Mirrors controllers/marketplace.controller.js, toolLibrary.controller.js,
+// flow.controller.js, flowRun.controller.js. Fully separate from Discovery/
+// Brand Health above — no shared types, no shared endpoints.
+
+export type Tool = {
+  _id: string
+  name: string
+  slug: string
+  description: string
+  category: string
+  icon?: string | null
+  playground_compatible: boolean
+  input_schema?: Record<string, unknown>
+  output_schema?: Record<string, unknown>
+  accepts_tool_output_from: string[]
+  version: number
+  // Only present on GET /marketplace/tools — whether the calling account
+  // already has this tool in its library.
+  in_library?: boolean
+  // Only present on GET /me/tool-library — when it was added.
+  addedAt?: string
+}
+
+// GET /marketplace/tools?category=...
+export function listMarketplaceTools(token: string, category?: string) {
+  const qs = category ? `?${new URLSearchParams({ category })}` : ''
+  return request<{ tools: Tool[] }>(`/marketplace/tools${qs}`, { token })
+}
+
+// POST /me/tool-library
+export function addToolToLibrary(token: string, toolId: string) {
+  return request<{ entry: { _id: string; ownerId: string; toolId: string; addedAt: string } }>(
+    '/me/tool-library',
+    { method: 'POST', token, body: JSON.stringify({ toolId }) }
+  )
+}
+
+// GET /me/tool-library
+export function listLibraryTools(token: string) {
+  return request<{ tools: Tool[] }>('/me/tool-library', { token })
+}
+
+// DELETE /me/tool-library/:toolId — doesn't touch existing Flows, only
+// blocks adding new nodes of this tool going forward.
+export function removeToolFromLibrary(token: string, toolId: string) {
+  return request<Record<string, never>>(`/me/tool-library/${toolId}`, { method: 'DELETE', token })
+}
+
+// ─── Flows ───────────────────────────────────────────────────────────────
+
+export type FlowNodeInput = {
+  nodeId: string
+  toolId: string
+  position: { x: number; y: number }
+}
+
+export type FlowNode = FlowNodeInput & {
+  // Only present on GET /flows/:flowId — hydrated tool details for
+  // rendering the node on the canvas without a second fetch.
+  tool?: Pick<Tool, 'name' | 'slug' | 'icon' | 'category' | 'output_schema' | 'version' | 'accepts_tool_output_from'> | null
+}
+
+export type FlowEdge = { fromNodeId: string; toNodeId: string }
+
+export type FlowSummary = {
+  _id: string
+  name: string
+  node_count: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type FlowDetail = {
+  _id: string
+  name: string
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+  createdAt: string
+  updatedAt: string
+}
+
+// POST /flows
+export function createFlow(token: string, body: { name: string; nodes: FlowNodeInput[]; edges: FlowEdge[] }) {
+  return request<{ flow: FlowDetail }>('/flows', { method: 'POST', token, body: JSON.stringify(body) })
+}
+
+// GET /flows
+export function listFlows(token: string) {
+  return request<{ flows: FlowSummary[] }>('/flows', { token })
+}
+
+// GET /flows/:flowId
+export function getFlow(token: string, flowId: string) {
+  return request<{ flow: FlowDetail }>(`/flows/${flowId}`, { token })
+}
+
+// PATCH /flows/:flowId — any subset of name/nodes/edges
+export function updateFlow(
+  token: string,
+  flowId: string,
+  body: Partial<{ name: string; nodes: FlowNodeInput[]; edges: FlowEdge[] }>
+) {
+  return request<{ flow: FlowDetail }>(`/flows/${flowId}`, { method: 'PATCH', token, body: JSON.stringify(body) })
+}
+
+// DELETE /flows/:flowId — doesn't cascade-delete past FlowRuns; history stays.
+export function deleteFlow(token: string, flowId: string) {
+  return request<Record<string, never>>(`/flows/${flowId}`, { method: 'DELETE', token })
+}
+
+// ─── Flow runs ───────────────────────────────────────────────────────────
+
+export type FlowRunStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'
+
+// POST /flows/:flowId/run
+export function runFlow(token: string, flowId: string, productId: string) {
+  return request<{ flow_run_id: string; status: FlowRunStatus }>(`/flows/${flowId}/run`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ productId }),
+  })
+}
+
+export type FlowRunSection = {
+  node_id: string
+  tool_name: string
+  tool_slug: string | null
+  tool_icon: string | null
+  tool_version: number
+  status: FlowRunStatus
+  output: unknown
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type FlowRunReport = {
+  flow_run_id: string
+  status: FlowRunStatus
+  started_at: string | null
+  completed_at: string | null
+  sections: FlowRunSection[]
+}
+
+// GET /flow-runs/:flowRunId — poll this until status is DONE or FAILED.
+export function getFlowRun(token: string, flowRunId: string) {
+  return request<{ report: FlowRunReport }>(`/flow-runs/${flowRunId}`, { token })
+}
+
+export type FlowRunHistoryEntry = {
+  flow_run_id: string
+  flow_id: string | null
+  flow_name: string
+  status: FlowRunStatus
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+// GET /products/:productId/flow-runs — history across all flows for this product.
+export function listProductFlowRuns(token: string, productId: string) {
+  return request<{ runs: FlowRunHistoryEntry[] }>(`/products/${productId}/flow-runs`, { token })
+}

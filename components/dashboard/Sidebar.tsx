@@ -20,6 +20,7 @@ import {
   Building2,
   BookOpen,
   Store,
+  Workflow,
 } from 'lucide-react'
 import type { NavId } from './types'
 import { listCompanies, listProducts, ApiError, type Company } from '@/lib/api/client'
@@ -41,6 +42,7 @@ export const NAV_ITEMS: { id: NavId; label: string; icon: typeof LayoutDashboard
 const GLOBAL_NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: '/docs', label: 'Docs', icon: BookOpen },
   { href: '/marketplace', label: 'Marketplace', icon: Store },
+  { href: '/flows', label: 'Flows', icon: Workflow },
 ]
 
 interface SidebarProps {
@@ -244,6 +246,17 @@ export default function Sidebar({
           >
             <Building2 className="w-4 h-4" />
             My Workspace
+          </button>
+
+          {/* Playground entry point for THIS product — separate route, not a
+              `nav` tab, since Playground is fully isolated from the
+              Discovery/Brand Health audit system it sits next to here. */}
+          <button
+            onClick={() => router.push(`/dashboard/products/${productId}/playground`)}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 mb-4 text-sm font-medium rounded-lg text-left text-brand-muted hover:text-brand-text hover:bg-brand-card/50 transition-colors border border-brand-border"
+          >
+            <Workflow className="w-4 h-4" />
+            Playground
           </button>
 
           <span className="block px-3 text-[10px] font-mono text-brand-muted uppercase tracking-wider mb-2">
