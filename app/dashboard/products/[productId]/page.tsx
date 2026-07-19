@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useApp } from '@/lib/context/AppContext'
-import { getProduct, getProductSetupState, ApiError, type SetupState, type Product } from '@/lib/api/client'
+import { getProduct, getProductSetupState, getCompany, ApiError, type SetupState, type Product } from '@/lib/api/client'
 import DashboardLayout from '@/components/dashboard/DashboardLayout'
 import { AlertCircle, Signal } from 'lucide-react'
 
@@ -32,6 +32,7 @@ export default function ProductResolverPage() {
 
   const [setupState, setSetupState] = useState<SetupState | null>(null)
   const [product, setProduct] = useState<Product | null>(null)
+  const [companyName, setCompanyName] = useState<string>('')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -44,6 +45,17 @@ export default function ProductResolverPage() {
           getProduct(token, productId),
         ])
         if (cancelled) return
+
+        // The account can own more than one company — this product's OWN
+        // companyId (not whatever AppContext's global, onboarding-only
+        // companyId happens to be pointing at right now) is the only
+        // correct source for "which workspace is this." Fetching it here
+        // and passing it down is what fixes My Workspace / the product
+        // switcher / New Product all resolving against the wrong or empty
+        // company when this account has more than one.
+        getCompany(token, prod.companyId)
+          .then(company => { if (!cancelled) setCompanyName(company.name) })
+          .catch(() => { /* non-fatal — Sidebar falls back to "My Workspace" */ })
 
         // Context scrape failed — no audit can start until that's fixed.
         // Nothing to resolve into; show it directly instead of bouncing
@@ -104,6 +116,8 @@ export default function ProductResolverPage() {
     <DashboardLayout
       productId={productId}
       productName={product.product_name}
+      companyId={product.companyId}
+      companyName={companyName}
       audits={setupState.audits}
       initialTab={setupState.default_view!}
     />

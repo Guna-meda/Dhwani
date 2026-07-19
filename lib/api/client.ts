@@ -478,7 +478,7 @@ export function getFlow(token: string, flowId: string) {
   return request<{ flow: FlowDetail }>(`/flows/${flowId}`, { token })
 }
 
-// PATCH /flows/:flowId — any subset of name/nodes/edges
+// PATCH /flows/:flowId — any subset of name/nodes/edges bggghghhg bv vvm  ihjioy    fdff
 export function updateFlow(
   token: string,
   flowId: string,

@@ -196,6 +196,47 @@ export default function OverviewTab({
         )}
       </div>
 
+      {/* Category vs. niche tier breakdown — Discovery only (Brand Health
+          prompts aren't tiered). Deliberately NOT blended into the single
+          "Mention rate" stat above: a low category-tier score is expected
+          for a challenger brand (broad "best X" queries skew toward
+          incumbents) while a low niche-tier score is the signal actually
+          worth acting on. Showing one blended number hides which is which. */}
+      {discovery && discovery.by_tier && !loading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+            <span className="text-xs font-mono text-brand-muted uppercase">Category tier</span>
+            <span className="block text-3xl font-bold text-brand-text mt-2">
+              {pct(discovery.by_tier.category?.mention_rate_pct ?? 0)}
+            </span>
+            <div className="text-xs text-brand-muted mt-2 font-mono">
+              {discovery.by_tier.category?.mentioned_count ?? 0} / {discovery.by_tier.category?.total_prompts ?? 0} broad
+              &quot;best X&quot; prompts
+            </div>
+            <p className="text-xs text-brand-muted/80 mt-3 leading-relaxed">
+              Broad category searches are dominated by established players — a low score here is expected for a
+              challenger brand and isn&apos;t a sign your AEO work isn&apos;t working.
+            </p>
+          </div>
+
+          <div className="bg-brand-surface rounded-xl p-5 border border-brand-border">
+            <span className="text-xs font-mono text-brand-muted uppercase">Niche tier</span>
+            <span className="block text-3xl font-bold text-brand-accent mt-2">
+              {pct(discovery.by_tier.niche?.mention_rate_pct ?? 0)}
+            </span>
+            <div className="text-xs text-brand-muted mt-2 font-mono">
+              {discovery.by_tier.niche?.mentioned_count ?? 0} / {discovery.by_tier.niche?.total_prompts ?? 0} specific,
+              pain-point-driven prompts
+            </div>
+            <p className="text-xs text-brand-muted/80 mt-3 leading-relaxed">
+              This is where your positioning and content should show up. If this stays low, that&apos;s the real
+              signal to act on — it usually means AI engines aren&apos;t finding citable content connecting you to
+              these queries.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-brand-surface rounded-xl border border-brand-border p-5">
         <h3 className="text-base font-medium text-brand-text mb-4">Mention rate by model</h3>
         {loading ? (

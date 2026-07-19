@@ -36,6 +36,16 @@ interface DashboardLayoutProps {
   // the right data — no stale-summary risk.
   productId: string
   productName: string
+  // THIS product's actual owning company — fetched by the parent page via
+  // product.companyId / getCompany, NOT AppContext's companyId/companyName.
+  // AppContext's version only ever reflects whichever company the account's
+  // one-time onboarding flow resolved to; for any account with more than
+  // one company, that's frequently NOT the company that owns the product
+  // currently being viewed. Sourcing it from the product itself is what
+  // makes "My Workspace", the product switcher, and "New product" all
+  // resolve against the right (or any) company instead of a stale/empty one.
+  companyId: string
+  companyName: string
   // Discovery and Brand Health are independent — one can be DONE while the
   // other is RUNNING or never started, on the same product. Both ride
   // along here so the tab strip below can represent each one honestly
@@ -49,11 +59,11 @@ const AUDIT_TABS: { type: AuditType; label: string; icon: typeof Search }[] = [
   { type: 'brandhealth', label: 'Brand Health', icon: Activity },
 ]
 
-export default function DashboardLayout({ productId, productName, audits, initialTab }: DashboardLayoutProps) {
-  // companyId/companyName/role are account-level, not product-level — the
-  // signed-in user's current company context, which the workspace switcher
-  // (Sidebar) reads and can change via router navigation.
-  const { companyId, companyName, role, getToken } = useApp()
+export default function DashboardLayout({ productId, productName, companyId, companyName, audits, initialTab }: DashboardLayoutProps) {
+  // role/getToken genuinely are account-level and don't vary by which
+  // product is open, so those still come from AppContext. companyId/
+  // companyName do NOT — see the prop comment above for why.
+  const { role, getToken } = useApp()
   const { user } = useUser()
   const { signOut } = useClerk()
   const router = useRouter()
@@ -188,7 +198,7 @@ export default function DashboardLayout({ productId, productName, audits, initia
         onCloseMobile={() => setMobileSidebarOpen(false)}
         workspaceLabel={workspaceLabel}
         isAgency={isAgency}
-        companyId={companyId ?? ''}
+        companyId={companyId}
         productId={productId}
         productName={productName}
         getToken={getToken}

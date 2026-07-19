@@ -47,6 +47,7 @@ export interface DiscoveryEngineMetric {
 export interface DiscoveryPerPrompt {
   promptId: string
   prompt_text: string
+  tier: 'category' | 'niche' | null
   engine: Engine
   mentioned: boolean
   position: number | null
@@ -79,6 +80,15 @@ export interface CitationEntry {
 export interface DiscoverySummaryData {
   engines_run: Engine[]
   combined: DiscoveryEngineMetric
+  // Same shape as `combined`, split by prompt tier. category = broad "best
+  // X" prompts (expected to skew toward incumbents — this is landscape, not
+  // a grade on the brand). niche = specific, persona/pain-point-driven
+  // prompts (the tier a well-positioned niche brand should realistically be
+  // winning). Prefer this over `combined` when actually judging performance.
+  by_tier?: {
+    category: DiscoveryEngineMetric
+    niche: DiscoveryEngineMetric
+  }
   per_engine: Record<string, DiscoveryEngineMetric>
   per_prompt: DiscoveryPerPrompt[]
   competitor_landscape: CompetitorEntry[]
