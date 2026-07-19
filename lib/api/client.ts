@@ -83,7 +83,11 @@ export function submitUserOnboarding(
   token: string,
   body: { name: string; country: string; hear_about_us: string; work_email: string; role: string }
 ) {
-  return request<{ success: boolean }>('/onboarding/user', {
+  // Backend returns the updated User document (see onboarding.controller.js),
+  // not a bare {success} flag — callers here only await the promise and
+  // don't read the payload, so this was a silent type/reality mismatch
+  // rather than a live bug, but fixed to stop it from becoming one.
+  return request<Record<string, unknown>>('/onboarding/user', {
     method: 'POST',
     token,
     body: JSON.stringify(body),
@@ -94,7 +98,8 @@ export function submitCompanyOnboarding(
   token: string,
   body: { name: string; country: string }
 ) {
-  return request<{ success: boolean }>('/onboarding/company', {
+  // Backend returns the created Company document, same note as above.
+  return request<Record<string, unknown>>('/onboarding/company', {
     method: 'POST',
     token,
     body: JSON.stringify(body),
@@ -478,7 +483,7 @@ export function getFlow(token: string, flowId: string) {
   return request<{ flow: FlowDetail }>(`/flows/${flowId}`, { token })
 }
 
-// PATCH /flows/:flowId — any subset of name/nodes/edges bggghghhg bv vvm  ihjioy    fdff
+// PATCH /flows/:flowId — any subset of name/nodes/edges
 export function updateFlow(
   token: string,
   flowId: string,

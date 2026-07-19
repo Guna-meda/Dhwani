@@ -25,7 +25,6 @@ import {
 
 export default function LandingPage() {
   const {
-    triggerAudit,
     setAuthModalOpen,
     setAuthModalView,
     setView,
@@ -71,7 +70,8 @@ export default function LandingPage() {
           setTimeout(() => {
             setIsAuditing(false);
             setAuditProgress(0);
-            triggerAudit(bizName, category, city);
+            setAuthModalView('signUp');
+            setAuthModalOpen(true);
           }, 600);
           return 100;
         }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useApp } from '@/lib/context/AppContext'
 import { createProduct, ApiError } from '@/lib/api/client'
@@ -12,6 +12,16 @@ import { useClerk } from '@clerk/nextjs'
 // endpoint. On success, always continues into choose-audit; a freshly
 // created product with no audit type is never a useful end state.
 export default function NewProductPage() {
+  return (
+    // useSearchParams() opts this page out of static prerendering unless
+    // wrapped in Suspense — without this, `next build` fails outright.
+    <Suspense fallback={null}>
+      <NewProductForm />
+    </Suspense>
+  )
+}
+
+function NewProductForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const companyId = searchParams.get('companyId') ?? ''
