@@ -87,4 +87,23 @@ body {
       opacity: 1;
     }
   }
+
+  /* ReactFlow's Controls widget (zoom in/out/fit view) ships with hardcoded
+     white buttons and no theming hook via className alone — has to be
+     overridden at the element level, scoped to this canvas only via the
+     .playground-controls wrapper class. */
+  .playground-controls .react-flow__controls-button {
+    background: var(--color-brand-card);
+    border-bottom: 1px solid var(--color-brand-border);
+    fill: var(--color-brand-muted);
+  }
+
+  .playground-controls .react-flow__controls-button:hover {
+    background: var(--color-brand-surface);
+    fill: var(--color-brand-accent);
+  }
+
+  .playground-controls .react-flow__controls-button svg {
+    fill: currentColor;
+  }
 }

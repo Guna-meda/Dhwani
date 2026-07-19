@@ -1,6 +1,7 @@
 import { CheckCircle2, XCircle, Loader2, Clock } from 'lucide-react'
 import DynamicIcon from '@/components/marketplace/DynamicIcon'
 import { formatDate } from '@/components/dashboard/utils'
+import CrawlabilityReport, { isCrawlabilityOutput } from './CrawlabilityReport'
 import type { FlowRunReport, FlowRunSection } from '@/lib/api/client'
 
 function StatusBadge({ status }: { status: FlowRunSection['status'] }) {
@@ -36,11 +37,14 @@ function StatusBadge({ status }: { status: FlowRunSection['status'] }) {
   )
 }
 
-// output_schema is documentation, not an enforced shape — this just renders
-// whatever came back reasonably rather than assuming a specific structure.
-function OutputPreview({ output }: { output: unknown }) {
+// output_schema is documentation, not an enforced shape — falls back to a
+// raw JSON dump for any tool that doesn't have a bespoke renderer below yet.
+function OutputPreview({ output, toolSlug }: { output: unknown; toolSlug: string | null }) {
   if (output === null || output === undefined) {
     return <p className="text-xs text-brand-muted italic">No output yet.</p>
+  }
+  if (toolSlug === 'ai-search-crawler-sim' && isCrawlabilityOutput(output)) {
+    return <CrawlabilityReport output={output} />
   }
   if (typeof output === 'object') {
     return (
@@ -72,7 +76,7 @@ export default function FlowRunReportView({ report }: { report: FlowRunReport })
             <p className="text-xs text-red-400 mb-2">{section.error}</p>
           )}
 
-          <OutputPreview output={section.output} />
+          <OutputPreview output={section.output} toolSlug={section.tool_slug} />
 
           {section.completed_at && (
             <p className="text-[10px] font-mono text-brand-muted mt-2">

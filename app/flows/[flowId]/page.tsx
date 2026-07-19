@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Loader2, AlertCircle, Pencil, Check } from 'lucide-react'
 import { useApp } from '@/lib/context/AppContext'
-import { getFlow, updateFlow, listLibraryTools, ApiError, type FlowDetail, type Tool } from '@/lib/api/client'
+import { getFlow, createFlow, updateFlow, listLibraryTools, ApiError, type FlowDetail, type Tool } from '@/lib/api/client'
 import PlaygroundCanvas, { type SaveNodePayload } from '@/components/flows/PlaygroundCanvas'
 import type { FlowEdge } from '@/lib/api/client'
 
@@ -28,6 +28,19 @@ export default function FlowEditorPage() {
       setError('')
       try {
         const token = await getToken()
+
+        if (flowId === 'new') {
+          // Nothing to fetch — this flow doesn't exist in the backend yet.
+          // It's created for real on the first save, once it has a node
+          // (see handleSaveCanvas below).
+          const { tools } = await listLibraryTools(token)
+          if (cancelled) return
+          setFlow({ _id: 'new', name: 'Untitled flow', nodes: [], edges: [], createdAt: '', updatedAt: '' })
+          setNameDraft('Untitled flow')
+          setLibraryTools(tools)
+          return
+        }
+
         const [{ flow: fetchedFlow }, { tools }] = await Promise.all([
           getFlow(token, flowId),
           listLibraryTools(token),
@@ -50,6 +63,22 @@ export default function FlowEditorPage() {
     setSaveError('')
     try {
       const token = await getToken()
+
+      if (flowId === 'new') {
+        // First real save of a draft — this is the only place a Flow row
+        // actually gets created. Swap the URL to the real id afterwards so
+        // every subsequent save goes through the normal updateFlow path
+        // instead of re-creating a duplicate flow.
+        const { flow: created } = await createFlow(token, {
+          name: flow?.name ?? 'Untitled flow',
+          nodes: payload.nodes,
+          edges: payload.edges,
+        })
+        setFlow(created)
+        router.replace(`/flows/${created._id}`)
+        return
+      }
+
       const { flow: updated } = await updateFlow(token, flowId, { nodes: payload.nodes, edges: payload.edges })
       setFlow(updated)
     } catch (err) {
@@ -61,6 +90,13 @@ export default function FlowEditorPage() {
 
   async function handleRename() {
     if (!nameDraft.trim() || nameDraft === flow?.name) {
+      setRenaming(false)
+      return
+    }
+    if (flowId === 'new') {
+      // Nothing to PATCH yet — just update local state. Persisted together
+      // with the first real save, in handleSaveCanvas.
+      setFlow(f => (f ? { ...f, name: nameDraft.trim() } : f))
       setRenaming(false)
       return
     }

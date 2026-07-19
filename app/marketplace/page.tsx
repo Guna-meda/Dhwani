@@ -66,11 +66,11 @@ export default function MarketplacePage() {
       <div className="border-b border-brand-border px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.back()}
+            onClick={() => router.push('/dashboard')}
             className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Back
+            Dashboard
           </button>
           <div className="flex items-center gap-2">
             <Signal className="w-4 h-4 text-brand-accent" />

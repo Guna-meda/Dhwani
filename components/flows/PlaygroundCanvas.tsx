@@ -43,8 +43,8 @@ type ToolNodeData = {
 function ToolNodeComponent({ id, data }: NodeProps) {
   const d = data as unknown as ToolNodeData
   return (
-    <div className="min-w-[190px] bg-brand-card border border-brand-border rounded-xl px-3 py-2.5 shadow-sm">
-      <Handle type="target" position={Position.Left} className="!bg-brand-accent !w-2 !h-2" />
+    <div className="min-w-47.5 bg-brand-card border border-brand-border rounded-xl px-3 py-2.5 shadow-sm">
+      <Handle type="target" position={Position.Left} className="bg-brand-accent! w-2! h-2!" />
       <div className="flex items-center gap-2">
         <div className="w-6 h-6 rounded-md bg-brand-bg border border-brand-border flex items-center justify-center text-brand-accent shrink-0">
           <DynamicIcon name={d.icon} className="w-3.5 h-3.5" />
@@ -56,7 +56,7 @@ function ToolNodeComponent({ id, data }: NodeProps) {
           </button>
         )}
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-brand-accent !w-2 !h-2" />
+      <Handle type="source" position={Position.Right} className="bg-brand-accent! w-2! h-2!" />
     </div>
   )
 }
@@ -64,13 +64,13 @@ function ToolNodeComponent({ id, data }: NodeProps) {
 function FixedNodeComponent({ data }: NodeProps) {
   const d = data as unknown as { label: string; kind: 'start' | 'report' }
   return (
-    <div className="min-w-[150px] bg-brand-primary/10 border border-brand-primary/30 rounded-xl px-3 py-3 text-center">
+    <div className="min-w-37.5 bg-brand-primary/10 border border-brand-primary/30 rounded-xl px-3 py-3 text-center">
       {d.kind === 'report' && (
-        <Handle type="target" position={Position.Left} className="!bg-brand-primary !w-2 !h-2" />
+        <Handle type="target" position={Position.Left} className="bg-brand-primary! w-2! h-2!" />
       )}
       <span className="text-xs font-semibold text-brand-accent">{d.label}</span>
       {d.kind === 'start' && (
-        <Handle type="source" position={Position.Right} className="!bg-brand-primary !w-2 !h-2" />
+        <Handle type="source" position={Position.Right} className="bg-brand-primary! w-2! h-2!" />
       )}
     </div>
   )
@@ -354,8 +354,16 @@ function CanvasInner({ libraryTools, initialNodes, initialEdges, onSave, saving,
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={16} />
-            <Controls showInteractive={false} />
-            <MiniMap pannable zoomable className="!bg-brand-card" />
+            <Controls showInteractive={false} className="playground-controls" />
+            <MiniMap
+              pannable
+              zoomable
+              className="bg-brand-card!"
+              maskColor="rgba(6, 11, 13, 0.75)"
+              nodeColor="#0D171A"
+              nodeStrokeColor="#2AA198"
+              nodeStrokeWidth={2}
+            />
           </ReactFlow>
         </div>
       </div>
