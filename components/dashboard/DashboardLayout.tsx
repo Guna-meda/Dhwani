@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useUser, useClerk } from '@clerk/nextjs'
 import { useApp } from '@/lib/context/AppContext'
-import { getDiscoverySummary, getBrandHealthSummary, ApiError, type SetupState } from '@/lib/api/client'
+import { getDiscoverySummary, getBrandHealthSummary, getProductSetupState, ApiError, type SetupState } from '@/lib/api/client'
 import { AlertCircle, RefreshCw, Search, Activity, Loader2, Plus, Check } from 'lucide-react'
 
 import Sidebar from './Sidebar'
@@ -14,6 +14,7 @@ import PromptsTab from './tabs/PromptsTab'
 import RecommendationsTab from './tabs/RecommendationsTab'
 import CitationsTab from './tabs/CitationsTab'
 import CompetitorsTab from './tabs/CompetitorsTab'
+import AuditPendingCard from './AuditPendingCard'
 
 import { asRecord } from './utils'
 import type {
@@ -46,10 +47,11 @@ interface DashboardLayoutProps {
   // resolve against the right (or any) company instead of a stale/empty one.
   companyId: string
   companyName: string
-  // Discovery and Brand Health are independent — one can be DONE while the
-  // other is RUNNING or never started, on the same product. Both ride
-  // along here so the tab strip below can represent each one honestly
-  // instead of one audit hiding or overwriting the other.
+  // Discovery and Brand Health are independent — one can be DONE, RUNNING,
+  // or still NOT_STARTED while the other is in any of those states, on the
+  // same product. Both ride along here so the tab strip below can represent
+  // each one honestly instead of one audit hiding or overwriting the other.
+  // Initial value only — kept fresh locally afterward, see liveAudits below.
   audits: SetupState['audits']
   initialTab: AuditType
 }
@@ -74,8 +76,34 @@ export default function DashboardLayout({ productId, productName, companyId, com
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  // Starts from the prop, then kept fresh independently — a RUNNING audit
+  // needs to flip to DONE (and NOT_STARTED-with-prompts needs to reflect a
+  // just-confirmed audit) without the whole page reloading.
+  const [liveAudits, setLiveAudits] = useState(audits)
 
-  const activeAuditState = audits[activeType]
+  const activeAuditState = liveAudits[activeType]
+
+  // Polls setup-state while anything is still RUNNING, so a tab currently
+  // showing "running" flips over to real results on its own once the audit
+  // actually finishes — no manual refresh needed, and nothing here blocks
+  // navigating elsewhere in the meantime since this is just a background poll.
+  useEffect(() => {
+    const anyRunning = liveAudits.discovery.status === 'RUNNING' || liveAudits.brandhealth.status === 'RUNNING'
+    if (!anyRunning) return
+
+    const interval = setInterval(async () => {
+      try {
+        const token = await getToken()
+        const state = await getProductSetupState(token, productId)
+        setLiveAudits(state.audits)
+      } catch {
+        // Silent — this is a background refresh; a real error surfaces
+        // next time the person actually interacts with the affected tab.
+      }
+    }, 15000)
+
+    return () => clearInterval(interval)
+  }, [liveAudits.discovery.status, liveAudits.brandhealth.status, productId, getToken])
 
   // Reset summary whenever the routed product or active tab changes, so we
   // never render one audit's data for a moment while another's request is
@@ -151,22 +179,13 @@ export default function DashboardLayout({ productId, productName, companyId, com
   const isAgency = role === 'agency'
   const userLabel = user?.firstName || user?.primaryEmailAddress?.emailAddress || 'Account'
 
-  // Clicking a tab that isn't ready yet doesn't try to render a dashboard
-  // for it — RUNNING sends you to its own progress screen (still polling,
-  // just not this product's summary), NOT_STARTED sends you into
-  // choose-audit to kick it off. Only a DONE tab actually switches the
-  // dashboard's active view in place.
+  // Every tab switches in place now, whatever its status — the main content
+  // area below picks DONE results vs. AuditPendingCard based on
+  // activeAuditState. Used to navigate away to a full-page setup/progress
+  // screen for RUNNING, which hid the sidebar and blocked reaching anything
+  // else (Marketplace, Playground, Docs, other products) while it ran.
   function handleTabClick(type: AuditType) {
-    const state = audits[type]
-    if (state.status === 'DONE') {
-      setActiveType(type)
-      return
-    }
-    if (state.status === 'RUNNING') {
-      router.push(`/dashboard/products/${productId}/setup/progress?auditType=${type}`)
-      return
-    }
-    router.push(`/dashboard/products/${productId}/setup/audit-type`)
+    setActiveType(type)
   }
 
   // ── Guard states ─────────────────────────────────────────────────────────
@@ -220,8 +239,8 @@ export default function DashboardLayout({ productId, productName, companyId, com
             one silently replacing the other on this product. */}
         <div className="flex items-center gap-1 px-4 sm:px-6 lg:px-8 pt-3 border-b border-brand-border">
           {AUDIT_TABS.map(({ type, label, icon: Icon }) => {
-            const state = audits[type]
-            const isActive = type === activeType && state.status === 'DONE'
+            const state = liveAudits[type]
+            const isActive = type === activeType
             return (
               <button
                 key={type}
@@ -253,6 +272,10 @@ export default function DashboardLayout({ productId, productName, companyId, com
         </div>
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+          {activeAuditState.status !== 'DONE' ? (
+            <AuditPendingCard productId={productId} auditType={activeType} state={activeAuditState} />
+          ) : (
+            <>
           {nav === 'overview' && (
             <OverviewTab
               loading={loading}
@@ -280,6 +303,8 @@ export default function DashboardLayout({ productId, productName, companyId, com
               isDiscovery={isDiscovery}
               competitors={discovery?.competitor_landscape ?? []}
             />
+          )}
+            </>
           )}
         </main>
       </div>

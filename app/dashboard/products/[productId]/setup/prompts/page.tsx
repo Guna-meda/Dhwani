@@ -88,7 +88,7 @@ export default function ReviewPromptsPage() {
         getToken={getToken}
         onPromptsChange={setPrompts}
         onConfirmed={() => {
-          router.push(`/dashboard/products/${productId}/setup/progress?auditType=${auditType}`)
+          router.push(`/dashboard/products/${productId}`)
         }}
       />
     )

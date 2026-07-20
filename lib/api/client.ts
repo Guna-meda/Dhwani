@@ -391,6 +391,21 @@ export function getBrandHealthSummary(token: string, productId: string) {
 // flow.controller.js, flowRun.controller.js. Fully separate from Discovery/
 // Brand Health above — no shared types, no shared endpoints.
 
+// Mirrors inputSchemaValidator.js on the backend — the one place this shape
+// is defined; keep in sync if that file changes.
+export type InputSchemaField = {
+  key: string
+  label: string
+  type: 'string' | 'string[]' | 'number' | 'boolean' | 'select'
+  required: boolean
+  maxItems?: number
+  maxLength?: number
+  help?: string
+  source: 'manual' | 'upstream' | 'either'
+  defaultFrom?: string | null
+  options?: { value: string; label: string }[] | null
+}
+
 export type Tool = {
   _id: string
   name: string
@@ -399,7 +414,7 @@ export type Tool = {
   category: string
   icon?: string | null
   playground_compatible: boolean
-  input_schema?: Record<string, unknown>
+  input_schema?: { fields: InputSchemaField[] }
   output_schema?: Record<string, unknown>
   accepts_tool_output_from: string[]
   version: number
@@ -441,12 +456,20 @@ export type FlowNodeInput = {
   nodeId: string
   toolId: string
   position: { x: number; y: number }
+  // Per-node input values, shaped by that tool's input_schema. Sanitized
+  // server-side on save (inputSchemaValidator.js) — what comes back from
+  // GET/PATCH is the cleaned version, not necessarily byte-identical to
+  // what was sent.
+  config?: Record<string, unknown>
 }
 
 export type FlowNode = FlowNodeInput & {
   // Only present on GET /flows/:flowId — hydrated tool details for
   // rendering the node on the canvas without a second fetch.
-  tool?: Pick<Tool, 'name' | 'slug' | 'icon' | 'category' | 'output_schema' | 'version' | 'accepts_tool_output_from'> | null
+  tool?: Pick<Tool, 'name' | 'slug' | 'icon' | 'category' | 'output_schema' | 'input_schema' | 'version' | 'accepts_tool_output_from'> | null
+  // The Tool.version this node's config was validated against — compare to
+  // tool.version to detect drift (tool's schema changed since this was set up).
+  configuredForToolVersion?: number | null
 }
 
 export type FlowEdge = { fromNodeId: string; toNodeId: string }

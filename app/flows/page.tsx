@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Workflow, Plus, Trash2, Loader2, AlertCircle, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/context/AppContext'
-import { listFlows, createFlow, deleteFlow, ApiError, type FlowSummary } from '@/lib/api/client'
+import { listFlows, deleteFlow, ApiError, type FlowSummary } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
 import { formatDate } from '@/components/dashboard/utils'
 
@@ -14,7 +14,6 @@ export default function FlowsPage() {
 
   const [flows, setFlows] = useState<FlowSummary[] | null>(null)
   const [error, setError] = useState('')
-  const [creating, setCreating] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   async function load() {
@@ -34,20 +33,13 @@ export default function FlowsPage() {
   }, [])
 
   // A brand-new flow starts with zero nodes and is saved right away, then
-  // the person is dropped straight into the Playground canvas to build it.
-  // The canvas itself enforces "needs at least one tool node" before it lets
-  // them run it — an empty flow is a perfectly valid saved draft.
-  async function handleNewFlow() {
-    setCreating(true)
-    setError('')
-    try {
-      const token = await getToken()
-      const { flow } = await createFlow(token, { name: 'Untitled flow', nodes: [], edges: [] })
-      router.push(`/flows/${flow._id}`)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create a new flow.')
-      setCreating(false)
-    }
+  // The backend requires every Flow to have at least one node, on create AND
+  // update (validateFlowShape) — a flow can never be saved empty. So "New
+  // flow" can't eagerly POST /flows with nodes: [] like it used to; that
+  // 400s every time. Instead it's a client-only draft until the person adds
+  // a node and saves — see app/flows/[flowId]/page.tsx's "new" handling.
+  function handleNewFlow() {
+    router.push('/flows/new')
   }
 
   async function handleDelete(flowId: string, e: React.MouseEvent) {
@@ -77,8 +69,8 @@ export default function FlowsPage() {
           <ArrowLeft className="w-3.5 h-3.5" />
           Marketplace
         </button>
-        <Button size="sm" onClick={handleNewFlow} disabled={creating}>
-          {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+        <Button size="sm" onClick={handleNewFlow}>
+          <Plus className="w-3.5 h-3.5" />
           New flow
         </Button>
       </div>
@@ -111,8 +103,8 @@ export default function FlowsPage() {
             <p className="text-sm text-brand-muted mt-1.5 max-w-sm mb-4">
               Add a few tools to your library first, then create a flow to wire them together.
             </p>
-            <Button size="sm" onClick={handleNewFlow} disabled={creating}>
-              {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            <Button size="sm" onClick={handleNewFlow}>
+              <Plus className="w-3.5 h-3.5" />
               New flow
             </Button>
           </div>
@@ -121,10 +113,18 @@ export default function FlowsPage() {
         {flows && flows.length > 0 && (
           <div className="space-y-2">
             {flows.map(flow => (
-              <button
+              <div
                 key={flow._id}
+                role="button"
+                tabIndex={0}
                 onClick={() => router.push(`/flows/${flow._id}`)}
-                className="w-full flex items-center gap-3 bg-brand-card border border-brand-border rounded-xl p-4 text-left hover:bg-brand-surface transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    router.push(`/flows/${flow._id}`)
+                  }
+                }}
+                className="w-full flex items-center gap-3 bg-brand-card border border-brand-border rounded-xl p-4 text-left hover:bg-brand-surface transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
               >
                 <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-semibold text-brand-text truncate">{flow.name}</h3>
@@ -145,7 +145,7 @@ export default function FlowsPage() {
                   )}
                 </Button>
                 <ChevronRight className="w-4 h-4 text-brand-muted shrink-0" />
-              </button>
+              </div>
             ))}
           </div>
         )}

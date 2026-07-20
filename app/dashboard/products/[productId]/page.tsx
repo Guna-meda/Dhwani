@@ -65,28 +65,20 @@ export default function ProductResolverPage() {
           return
         }
 
-        // At least one audit reached DONE — that's the dashboard-ready case.
+        // Either audit has progressed past choose-audit at all (queued,
+        // running, or done) — that's enough to render the real dashboard.
+        // DashboardLayout itself shows the right thing per-tab from here:
+        // full results for DONE, an inline pending card otherwise (see
+        // AuditPendingCard) — nobody has to wait for full completion to
+        // reach Marketplace, Playground, Docs, or another product.
         if (state.default_view) {
           setSetupState(state)
           setProduct(prod)
           return
         }
 
-        // Neither audit is done. If either one is mid-flow (has prompts to
-        // review or is running), resume THAT one, on its own step — don't
-        // fall back to top-level next_step here, since that only reflects
-        // the "nothing started yet" case.
-        const inProgress = (['discovery', 'brandhealth'] as const)
-          .map(type => ({ type, ...state.audits[type] }))
-          .find(a => a.next_step === 'review-prompts' || a.next_step === 'audit-progress')
-
-        if (inProgress) {
-          const step = inProgress.next_step === 'review-prompts' ? 'prompts' : 'progress'
-          router.replace(`/dashboard/products/${productId}/setup/${step}?auditType=${inProgress.type}`)
-          return
-        }
-
-        // Nothing started at all — send them to pick Discovery or Brand Health.
+        // default_view === null only when BOTH audits are still exactly at
+        // choose-audit — genuinely nothing to resume, send them to pick one.
         router.replace(`/dashboard/products/${productId}/setup/audit-type`)
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load this product.')
