@@ -304,7 +304,10 @@ export default function Sidebar({
               return (
                 <button
                   key={item.href}
-                  onClick={() => { router.push(item.href); onCloseMobile() }}
+                  onClick={() => {
+                    router.push(productId ? `${item.href}?from=${productId}` : item.href)
+                    onCloseMobile()
+                  }}
                   className="w-full flex items-center gap-2.5 pl-8 pr-3 py-2.5 text-sm font-medium rounded-lg text-left text-brand-muted hover:text-brand-text hover:bg-brand-card/50 transition-colors"
                 >
                   <Icon className="w-4 h-4" />

@@ -93,7 +93,7 @@ export default function ProductPlaygroundPage() {
 
   return (
     <div className="min-h-screen bg-brand-bg">
-      <div className="border-b border-brand-border px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-4">
+      <div className="border-b border-brand-border px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-4 no-print">
         <button
           onClick={() => router.push(`/dashboard/products/${productId}`)}
           className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
@@ -104,26 +104,26 @@ export default function ProductPlaygroundPage() {
       </div>
 
       <div className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8">
-        <div className="flex items-center gap-2.5 mb-1.5">
+        <div className="flex items-center gap-2.5 mb-1.5 no-print">
           <Workflow className="w-4.5 h-4.5 text-brand-accent" />
           <h1 className="text-xl font-display font-semibold text-brand-text">Playground</h1>
         </div>
-        <p className="text-sm text-brand-muted mb-6">
+        <p className="text-sm text-brand-muted mb-6 no-print">
           Run one of your saved flows against this product. Results are kept per run — nothing here overwrites
           Discovery or Brand Health.
         </p>
 
         {error && (
-          <div className="flex items-center gap-2 text-sm text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg px-3 py-2 mb-4">
+          <div className="flex items-center gap-2 text-sm text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg px-3 py-2 mb-4 no-print">
             <AlertCircle className="w-4 h-4 shrink-0" />
             {error}
           </div>
         )}
 
-        {!flows && !error && <div className="text-center py-16 text-brand-muted text-sm">Loading…</div>}
+        {!flows && !error && <div className="text-center py-16 text-brand-muted text-sm no-print">Loading…</div>}
 
         {flows && flows.length === 0 && (
-          <div className="bg-brand-card border border-brand-border rounded-xl p-6 text-center mb-8">
+          <div className="bg-brand-card border border-brand-border rounded-xl p-6 text-center mb-8 no-print">
             <p className="text-sm text-brand-text mb-3">You don&apos;t have any saved flows yet.</p>
             <Button size="sm" onClick={() => router.push('/flows')}>
               Build a flow
@@ -132,7 +132,7 @@ export default function ProductPlaygroundPage() {
         )}
 
         {flows && flows.length > 0 && (
-          <div className="flex items-center gap-2 bg-brand-card border border-brand-border rounded-xl p-3 mb-8">
+          <div className="flex items-center gap-2 bg-brand-card border border-brand-border rounded-xl p-3 mb-8 no-print">
             <select
               value={selectedFlowId}
               onChange={(e) => setSelectedFlowId(e.target.value)}
@@ -154,7 +154,7 @@ export default function ProductPlaygroundPage() {
         {activeFlowRunId && (
           <div className="mb-8">
             {(!activeReport || (activeReport.status !== 'DONE' && activeReport.status !== 'FAILED')) && (
-              <div className="mb-4">
+              <div className="mb-4 no-print">
                 <FlowRunProgress flowRunId={activeFlowRunId} getToken={getToken} onUpdate={handleReportUpdate} />
               </div>
             )}
@@ -163,7 +163,7 @@ export default function ProductPlaygroundPage() {
         )}
 
         {history && history.length > 0 && (
-          <div>
+          <div className="no-print">
             <div className="flex items-center gap-2 mb-3">
               <History className="w-3.5 h-3.5 text-brand-muted" />
               <h2 className="text-xs font-mono uppercase tracking-wider text-brand-muted">Past runs</h2>

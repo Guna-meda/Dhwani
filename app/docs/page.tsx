@@ -1,7 +1,8 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { Suspense } from 'react'
 import { useUser } from '@clerk/nextjs'
 import {
   Signal, ArrowLeft, BookOpen, Rocket, Layers, Radar, Store, Code2,
@@ -154,8 +155,23 @@ const FAQ = [
 // ─── page ───────────────────────────────────────────────────────────────────
 
 export default function DocsPage() {
+  return (
+    <Suspense fallback={null}>
+      <DocsPageInner />
+    </Suspense>
+  )
+}
+
+function DocsPageInner() {
   const router = useRouter()
   const { isSignedIn } = useUser()
+  const searchParams = useSearchParams()
+  const fromProductId = searchParams.get('from')
+  // Was pointing at /dashboard, a route that doesn't exist by design (see
+  // marketplace/page.tsx's earlier fix for the same bug) — missed fixing it
+  // here at the time. Falls back to root (which resolves a default product)
+  // when there's no known origin, same as Marketplace/Flows.
+  const dashboardHref = fromProductId ? `/dashboard/products/${fromProductId}` : '/'
 
   return (
     <div className="min-h-screen bg-brand-bg">
@@ -174,7 +190,7 @@ export default function DocsPage() {
           </Link>
         </div>
         <Link
-          href={isSignedIn ? '/dashboard' : '/'}
+          href={isSignedIn ? dashboardHref : '/'}
           className="flex items-center gap-2 text-sm text-brand-muted hover:text-brand-text transition-colors px-3 py-2 rounded-lg hover:bg-brand-card"
         >
           {isSignedIn ? 'Go to dashboard' : 'Sign in'}

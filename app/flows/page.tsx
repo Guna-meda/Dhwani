@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Workflow, Plus, Trash2, Loader2, AlertCircle, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/context/AppContext'
 import { listFlows, deleteFlow, ApiError, type FlowSummary } from '@/lib/api/client'
@@ -9,8 +9,19 @@ import { Button } from '@/components/ui/button'
 import { formatDate } from '@/components/dashboard/utils'
 
 export default function FlowsPage() {
+  return (
+    <Suspense fallback={null}>
+      <FlowsPageInner />
+    </Suspense>
+  )
+}
+
+function FlowsPageInner() {
   const router = useRouter()
   const { getToken } = useApp()
+  const searchParams = useSearchParams()
+  const fromProductId = searchParams.get('from')
+  const marketplaceHref = fromProductId ? `/marketplace?from=${fromProductId}` : '/marketplace'
 
   const [flows, setFlows] = useState<FlowSummary[] | null>(null)
   const [error, setError] = useState('')
@@ -63,7 +74,7 @@ export default function FlowsPage() {
     <div className="min-h-screen bg-brand-bg">
       <div className="border-b border-brand-border px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
         <button
-          onClick={() => router.push('/marketplace')}
+          onClick={() => router.push(marketplaceHref)}
           className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
         >
           <ArrowLeft className="w-3.5 h-3.5" />

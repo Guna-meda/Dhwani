@@ -1,3 +1,4 @@
+import ExportPdfButton from '@/components/dashboard/ExportPdfButton'
 import { CheckCircle2, XCircle, Loader2, Clock } from 'lucide-react'
 import DynamicIcon from '@/components/marketplace/DynamicIcon'
 import { formatDate } from '@/components/dashboard/utils'
@@ -58,7 +59,11 @@ function OutputPreview({ output, toolSlug }: { output: unknown; toolSlug: string
 
 export default function FlowRunReportView({ report }: { report: FlowRunReport }) {
   return (
-    <div className="space-y-3">
+    <div>
+      <div className="flex justify-end mb-2">
+        <ExportPdfButton label="Export report as PDF" />
+      </div>
+      <div className="space-y-3 print-content">
       {report.sections.map(section => (
         <div key={section.node_id} className="bg-brand-card border border-brand-border rounded-xl p-4">
           <div className="flex items-center justify-between gap-2 mb-2">
@@ -85,6 +90,7 @@ export default function FlowRunReportView({ report }: { report: FlowRunReport })
           )}
         </div>
       ))}
+      </div>
     </div>
   )
 }

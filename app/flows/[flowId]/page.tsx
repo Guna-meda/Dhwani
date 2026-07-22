@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Loader2, AlertCircle, Pencil, Check } from 'lucide-react'
 import { useApp } from '@/lib/context/AppContext'
 import { getFlow, createFlow, updateFlow, listLibraryTools, ApiError, type FlowDetail, type Tool } from '@/lib/api/client'
@@ -13,6 +13,9 @@ export default function FlowEditorPage() {
   const flowId = params.flowId
   const router = useRouter()
   const { getToken } = useApp()
+  const searchParams = useSearchParams()
+  const fromProductId = searchParams.get('from')
+  const flowsHref = fromProductId ? `/flows?from=${fromProductId}` : '/flows'
 
   const [flow, setFlow] = useState<FlowDetail | null>(null)
   const [libraryTools, setLibraryTools] = useState<Tool[] | null>(null)
@@ -134,7 +137,7 @@ export default function FlowEditorPage() {
     <div className="h-screen bg-brand-bg flex flex-col">
       <div className="flex items-center gap-4 px-4 sm:px-6 py-3 border-b border-brand-border shrink-0">
         <button
-          onClick={() => router.push('/flows')}
+          onClick={() => router.push(flowsHref)}
           className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
         >
           <ArrowLeft className="w-3.5 h-3.5" />

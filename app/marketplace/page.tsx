@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useClerk } from '@clerk/nextjs'
 import { Signal, LogOut, ArrowLeft, Store, Library, Workflow, AlertCircle } from 'lucide-react'
 import { useApp } from '@/lib/context/AppContext'
@@ -13,9 +13,24 @@ import ToolCard from '@/components/marketplace/ToolCard'
 // of inside a product's audit dashboard, same reasoning as /docs. Fully
 // separate data model from Discovery/Brand Health (see models/tool.model.js).
 export default function MarketplacePage() {
+  // useSearchParams() opts a page out of static prerendering unless wrapped
+  // in Suspense — without this, `next build` fails outright.
+  return (
+    <Suspense fallback={null}>
+      <MarketplacePageInner />
+    </Suspense>
+  )
+}
+
+function MarketplacePageInner() {
   const router = useRouter()
   const { signOut } = useClerk()
   const { getToken } = useApp()
+  const searchParams = useSearchParams()
+  // Which product this was reached FROM, if any — carried forward through
+  // Library/Flows so "back to dashboard" from anywhere in this chain lands
+  // on the actual product you were viewing, not root's stale-context guess.
+  const fromProductId = searchParams.get('from')
 
   const [tools, setTools] = useState<Tool[] | null>(null)
   const [error, setError] = useState('')
@@ -66,7 +81,7 @@ export default function MarketplacePage() {
       <div className="border-b border-brand-border px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push(fromProductId ? `/dashboard/products/${fromProductId}` : '/')}
             className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-brand-text transition-colors px-3 py-1.5 rounded-md hover:bg-brand-card"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -78,11 +93,11 @@ export default function MarketplacePage() {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <Button variant="outline" size="sm" onClick={() => router.push('/marketplace/library')}>
+          <Button variant="outline" size="sm" onClick={() => router.push(fromProductId ? `/marketplace/library?from=${fromProductId}` : '/marketplace/library')}>
             <Library className="w-3.5 h-3.5" />
             My library
           </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/flows')}>
+          <Button variant="outline" size="sm" onClick={() => router.push(fromProductId ? `/flows?from=${fromProductId}` : '/flows')}>
             <Workflow className="w-3.5 h-3.5" />
             Flows
           </Button>

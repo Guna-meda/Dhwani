@@ -106,4 +106,33 @@ body {
   .playground-controls .react-flow__controls-button svg {
     fill: currentColor;
   }
+
+  /* PDF export = browser print-to-PDF, reusing the exact same React report
+     components instead of maintaining a separate PDF layout. Two classes
+     cover every report surface (Discovery, Brand Health, Playground runs):
+     .no-print on chrome that shouldn't appear in the export (sidebar,
+     topbar, tab strips, run controls), .print-content on the actual report
+     body, which gets its dark theme forced to print-friendly black-on-white. */
+  @media print {
+    .no-print {
+      display: none !important;
+    }
+    body {
+      background: white !important;
+    }
+    .print-content,
+    .print-content * {
+      color: #000 !important;
+      background: #fff !important;
+      border-color: #ccc !important;
+      box-shadow: none !important;
+    }
+    .print-content {
+      overflow: visible !important;
+      height: auto !important;
+    }
+    .print-content [class*="rounded"] {
+      break-inside: avoid;
+    }
+  }
 }

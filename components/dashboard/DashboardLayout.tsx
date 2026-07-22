@@ -14,6 +14,7 @@ import PromptsTab from './tabs/PromptsTab'
 import RecommendationsTab from './tabs/RecommendationsTab'
 import CitationsTab from './tabs/CitationsTab'
 import CompetitorsTab from './tabs/CompetitorsTab'
+import ExportPdfButton from './ExportPdfButton'
 import AuditPendingCard from './AuditPendingCard'
 
 import { asRecord } from './utils'
@@ -210,34 +211,38 @@ export default function DashboardLayout({ productId, productName, companyId, com
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-text flex overflow-hidden font-sans">
-      <Sidebar
-        nav={nav}
-        onNavChange={setNav}
-        mobileOpen={mobileSidebarOpen}
-        onCloseMobile={() => setMobileSidebarOpen(false)}
-        workspaceLabel={workspaceLabel}
-        isAgency={isAgency}
-        companyId={companyId}
-        productId={productId}
-        productName={productName}
-        getToken={getToken}
-        userLabel={userLabel}
-        onSignOut={() => signOut({ redirectUrl: '/' })}
-      />
+      <div className="no-print contents">
+        <Sidebar
+          nav={nav}
+          onNavChange={setNav}
+          mobileOpen={mobileSidebarOpen}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
+          workspaceLabel={workspaceLabel}
+          isAgency={isAgency}
+          companyId={companyId}
+          productId={productId}
+          productName={productName}
+          getToken={getToken}
+          userLabel={userLabel}
+          onSignOut={() => signOut({ redirectUrl: '/' })}
+        />
+      </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <TopBar
-          title={isDiscovery ? 'Discovery Audit' : 'Brand Health Audit'}
-          status={discovery?.status ?? brandHealth?.status}
-          createdAt={createdAt}
-          loading={loading}
-          onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-        />
+        <div className="no-print">
+          <TopBar
+            title={isDiscovery ? 'Discovery Audit' : 'Brand Health Audit'}
+            status={discovery?.status ?? brandHealth?.status}
+            createdAt={createdAt}
+            loading={loading}
+            onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+          />
+        </div>
 
         {/* Audit-type tab strip — Discovery and Brand Health are shown as
             two independent tabs, each reflecting its own state, instead of
             one silently replacing the other on this product. */}
-        <div className="flex items-center gap-1 px-4 sm:px-6 lg:px-8 pt-3 border-b border-brand-border">
+        <div className="flex items-center gap-1 px-4 sm:px-6 lg:px-8 pt-3 border-b border-brand-border no-print">
           {AUDIT_TABS.map(({ type, label, icon: Icon }) => {
             const state = liveAudits[type]
             const isActive = type === activeType
@@ -276,6 +281,10 @@ export default function DashboardLayout({ productId, productName, companyId, com
             <AuditPendingCard productId={productId} auditType={activeType} state={activeAuditState} />
           ) : (
             <>
+          <div className="flex justify-end no-print">
+            <ExportPdfButton label={`Export ${isDiscovery ? 'Discovery' : 'Brand Health'} report as PDF`} />
+          </div>
+          <div className="print-content space-y-6">
           {nav === 'overview' && (
             <OverviewTab
               loading={loading}
@@ -304,6 +313,7 @@ export default function DashboardLayout({ productId, productName, companyId, com
               competitors={discovery?.competitor_landscape ?? []}
             />
           )}
+          </div>
             </>
           )}
         </main>
